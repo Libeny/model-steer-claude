@@ -33,7 +33,8 @@ ROUTE_LEVELS = {
 - `/think-level?session=X&level=2` = 等效于 `/use-sonnet`
 - `/status?session=X` → `{"level": 2, "name": "sonnet", "label": "Sonnet"}`
 
-降级链固定：3 → 2 → 1（Opus → Sonnet → GLM），配置文件里可以扩展更多 level。
+**失败升级链（唯一方向）：** 1 → 2 → 3（GLM 失败 → 试 Sonnet → 试 Opus）。
+不存在"降级"回退——失败时总是往更强的模型走。用户主动切换（/smoke /redbull /think-level）不受此限制。
 
 ## 项目结构
 
@@ -92,7 +93,7 @@ claude-code-claw/
 - 启动时加载 `~/.claude-code-claw/config.json`，缺失用 default-config.json
 - `ROUTE_LEVELS` 从配置构建，每个 provider 独立 `httpx.Client`
 - Session 状态持久化到 `~/.claude-code-claw/sessions/<session_id>.json`（原子写：写临时文件 + rename）
-- 降级重试：同 provider 重试 3 次 → fallback 到 level+1 或 level-1（按降级链）
+- 失败升级：同 provider 重试 3 次 → fallback 到 level+1（1→2→3，唯一方向）
 - GLM 路由：替换 auth + model 字段
 - Anthropic 路由：透传全部 header（OAuth 兼容）
 - 签名修复：保留 StreamSignaturePatcher + fix_signatures + patch_json_signatures
@@ -134,9 +135,8 @@ curl --noproxy '*' -s http://127.0.0.1:3457/status?session=test001 | jq .level  
 
 流程：
 1. 读 stdin JSON → 提取 `session_id`
-2. `curl --noproxy '*' http://127.0.0.1:3457/register?session=<id>`
-3. 写 `~/.claude-code-claw/sessions/<session_id>.json`（备份，供模型读取）
-4. stdout 输出 session 状态（注入模型上下文）：
+2. `curl --noproxy '*' http://127.0.0.1:3457/register?session=<id>`（proxy 为 session 文件唯一写入者）
+3. stdout 输出 session 状态（注入模型上下文）：
 ```
 [claw] Session: <session_id_short>
 Current: Level 1 (GLM) | /think-level 1|2|3 | /smoke | /redbull
@@ -159,7 +159,7 @@ echo '{"session_id":"test-hook-001","source":"startup"}' | node hooks/session-st
 - 架构设计 / 复杂推理 → 升到 level 3
 - 任务完成 / 对话收尾 → 降回 level 1（自动 /smoke）
 
-读 session_id：先 `$CR_SESSION`，fallback `cat ~/.claude-code-claw/sessions/latest`
+读 session_id：**只用 `$CR_SESSION`**（由 `cr()` 函数注入）。无 fallback，无 `latest` 文件。如果 `$CR_SESSION` 为空则不执行切换。
 
 验收：文件存在且包含 curl 命令模板
 
@@ -177,24 +177,27 @@ node_modules/
 
 **Task 2.1: `install.sh`** — 分步安装，每步可选
 
-```
-Step 1 (core):    创建 ~/.claude-code-claw/ + 默认配置
-Step 2 (hooks):   合并 SessionStart + UserPromptSubmit hook 到 settings.json
-Step 3 (skills):  安装 /smoke /redbull /think-level 到 ~/.claude/skills/
-Step 4 (shell):   添加 cr() 函数到 .zshrc
+```bash
+./install.sh                    # 全部安装（默认）
+./install.sh --core             # 只安装 proxy + 配置
+./install.sh --hooks            # 只安装 hooks 到 settings.json
+./install.sh --skills           # 只安装 skills
+./install.sh --shell            # 只添加 cr() 到 .zshrc
+./install.sh --uninstall        # 反向清理全部
 ```
 
 合并策略：
 - settings.json hooks 是数组，append 不覆盖
 - 用 `python3 -c` 做 JSON 合并
-- 幂等：检查已存在则跳过
+- 幂等：检查 command 字符串已存在则跳过
 - `--uninstall` 反向清理
 
 验收：
 ```bash
-./install.sh           # 首次安装
-./install.sh           # 二次运行，无重复
-./install.sh --uninstall  # 清理
+./install.sh --core && ls ~/.claude-code-claw/config.json  # core only
+./install.sh --hooks && python3 -c "import json; h=json.load(open('$HOME/.claude/settings.json')); print([x for x in h['hooks']['SessionStart'] if 'claw' in str(x)])"  # hook 存在
+./install.sh           # 二次全量运行，无重复（幂等）
+./install.sh --uninstall && ! ls ~/.claude-code-claw/ 2>/dev/null  # 清理干净
 ```
 
 **Task 2.2: `hooks/user-prompt-submit.js`** — ~40 行
@@ -212,7 +215,7 @@ Step 4 (shell):   添加 cr() 函数到 .zshrc
 | `/think-level` | `skills/think-level/SKILL.md` | "/think-level 1\|2\|3" | 读 session → curl /think-level?level=N → 确认 |
 
 每个 skill 内部：
-1. 读 session_id：`$CR_SESSION` 或最近的 session 文件
+1. 读 session_id：**只用 `$CR_SESSION`**（无 fallback）
 2. 查 `/status` 获取当前 level
 3. 执行 curl 切换
 4. 确认输出：`[claw] Switched to Level N (Name)`
@@ -230,9 +233,18 @@ proxy 的 `/ui` 返回此文件。零依赖（内嵌 CSS + JS），功能：
 - 当日用量汇总（各模型 token 数 + 费用 + 节省比例）
 - 配置编辑（修改 provider key、调整 level 映射）
 
+**MVP 范围（先收敛）：**
+- Session 列表 + 当前 level + 基础 token stats
+- 配置只读查看（编辑功能后续迭代）
+- 不含费用计算/provider 健康检测（后续迭代）
+
 数据来源：轮询 `/sessions`、`/stats`、`/config` 接口
 
-验收：`open http://127.0.0.1:3457/ui`，页面正常渲染，数据刷新
+验收：
+```bash
+curl --noproxy '*' -s http://127.0.0.1:3457/ui | grep -q '<html'  # HTML 返回
+curl --noproxy '*' -s http://127.0.0.1:3457/sessions | jq .       # JSON 数组
+```
 
 **Task 3.2: `tools/fix-thinking-blocks.py`** — 从 `~/fix-session-thinking-blocks.py` 复制
 
@@ -257,16 +269,16 @@ python3 tools/usage-stats.py --all   # 全量统计
 
 ## 关键技术细节
 
-### 降级重试逻辑
+### 失败升级逻辑（唯一方向：1→2→3）
 ```
 请求 level 1 (GLM) → 失败
   → 同 provider 重试 3 次（间隔 2s）
-  → 仍失败 → 降级到 level 2 (Sonnet) → 重试 3 次
-  → 仍失败 → 降级到 level 3 (Opus) → 重试 3 次
+  → 仍失败 → 升级到 level 2 (Sonnet) → 重试 3 次
+  → 仍失败 → 升级到 level 3 (Opus) → 重试 3 次
   → 全部失败 → 返回 502 + 错误详情
 ```
 
-注意：降级方向是"质量升级"（GLM 挂了用 Sonnet），不是"质量降级"。
+失败时总是往更强的模型走，不存在反向回退。用户主动 `/smoke` `/think-level` 是独立操作。
 
 ### Auth 路由
 - provider=glm：去掉原始 auth header，注入 provider.key
@@ -288,7 +300,8 @@ python3 tools/usage-stats.py --all   # 全量统计
   "usage": {"glm": {...}, "sonnet": {...}}
 }
 ```
-写入方式：写临时文件 `<session_id>.json.tmp` → `os.rename()` 原子替换
+写入方式：写临时文件 `<session_id>.json.tmp` → `os.fsync()` → `os.replace()` 原子替换
+**所有持久化（session、config）统一此协议。** proxy 为 session 文件唯一写入者。
 
 ### Hook 时序
 ```
