@@ -4,16 +4,19 @@
 
 用户已有一个可工作的原型（`~/cr-proxy.py`），实现了 Claude Code 请求在 GLM（便宜）和 Anthropic Sonnet/Opus（强大）之间的路由切换。现在要把它做成开源项目 `~/work/claude-code-claw/`，加入自动决策、降级链、持久化、skill、可视化配置等完整功能。
 
-## Codex Review Round 1 修复
+## Codex Review 修复记录
 
-| Issue | 修复 |
-|-------|------|
-| ❌ provider/model/level 三层语义混淆 | 定义 `RouteLevel` 统一抽象：level → provider → model |
-| ❌ 接口命名冲突（think-harder vs smoke/redbull） | 冻结最终命名：`/smoke` `/redbull` `/think-level` |
-| ❌ `/tmp/cr-session` 并发风险 | 改为 `~/.claude-code-claw/sessions/<session_id>.json` |
-| ⚠️ routes.json 无原子写入 | 临时文件 + rename 原子写 |
-| ⚠️ install.sh 改动范围过大 | 分步安装：core → hooks → skills（可选） |
-| ⚠️ 验收标准不够任务化 | 每个 task 附带可执行验收命令 |
+| Round | Issue | 修复 |
+|-------|-------|------|
+| R1 ❌ | provider/model/level 三层语义混淆 | `RouteLevel` 统一抽象 |
+| R1 ❌ | 接口命名冲突 | 冻结：`/smoke` `/redbull` `/think-level` |
+| R1 ❌ | `/tmp/cr-session` 并发风险 | SQLite 数据库替代文件 |
+| R1 ⚠️ | 无原子写入 | SQLite 事务自带 |
+| R1 ⚠️ | install.sh 改动范围过大 | 分步安装 `--core --hooks --skills --shell` |
+| R2 ❌ | fallback 方向二义性 | 失败先降级再升级 |
+| R2 ❌ | session 来源 `latest` 回退 | `CLAUDE_ENV_FILE` 注入 `$CR_SESSION` |
+| R3 ❌ | hook 时序 session 来源冲突 | hook 通过 `CLAUDE_ENV_FILE` 直接 export |
+| R4 ❌ | `$CR_SESSION` 与真实 session_id 无桥接 | `CLAUDE_ENV_FILE` 彻底消除问题 |
 
 ## 核心抽象：RouteLevel
 
@@ -40,14 +43,14 @@ ROUTE_LEVELS = {
 
 ```
 claude-code-claw/
-├── proxy.py                     # 核心代理
-├── install.sh                   # 分步安装
+├── proxy.py                     # 核心代理（HTTP server + SQLite）
+├── install.sh                   # 分步安装（--core --hooks --skills --shell）
 ├── hooks/
-│   ├── session-start.js         # 捕获 session_id，注册到 proxy
-│   └── user-prompt-submit.js    # 注入当前模型/level 信息
+│   ├── session-start.sh         # CLAUDE_ENV_FILE 注入 CR_SESSION + 注册 proxy
+│   └── user-prompt-submit.sh    # 注入当前 level 信息到模型上下文
 ├── skills/
-│   ├── smoke/SKILL.md           # /smoke → level 1 (GLM)
-│   ├── redbull/SKILL.md         # /redbull → level 3 (Opus)
+│   ├── smoke/SKILL.md           # /smoke → 降到 level 1 (GLM)
+│   ├── redbull/SKILL.md         # /redbull → 升到 level 3 (Opus)
 │   └── think-level/SKILL.md     # /think-level 1|2|3
 ├── ui/
 │   └── dashboard.html           # 内嵌单文件 Web UI（零依赖）
@@ -60,6 +63,60 @@ claude-code-claw/
 ├── README.md
 └── .gitignore
 ```
+
+## 关键架构决策
+
+### 1. Session ID 传递：CLAUDE_ENV_FILE
+
+SessionStart hook 通过 `CLAUDE_ENV_FILE` 机制将真实 session_id 注入为环境变量 `$CR_SESSION`。模型 Bash 工具直接读取，无需文件回退、无需 ITERM_SESSION_ID、无需双向映射。
+
+```
+claude 启动 → 生成 session_id → SessionStart hook
+  → hook 从 stdin 读 session_id
+  → echo "export CR_SESSION=$SESSION_ID" >> $CLAUDE_ENV_FILE
+  → curl /register?session=$SESSION_ID 注册到 proxy
+  → 模型的所有 Bash 命令自动可用 $CR_SESSION
+```
+
+### 2. 存储：SQLite（~/.claude-code-claw/claw.db）
+
+替代 JSON 文件，解决原子写入、并发安全、模糊查询：
+
+```sql
+CREATE TABLE sessions (
+    session_id TEXT PRIMARY KEY,
+    level INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT,
+    level INTEGER,
+    provider TEXT,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    cache_read_tokens INTEGER DEFAULT 0,
+    cache_create_tokens INTEGER DEFAULT 0,
+    timestamp TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (session_id) REFERENCES sessions(session_id)
+);
+```
+
+### 3. Fallback 方向：先降级再升级
+
+```
+请求 Level 2 (Sonnet) 失败
+  → 重试 3 次（间隔 2s）
+  → 降级 Level 1 (GLM) → 重试 3 次
+  → 升级 Level 3 (Opus) → 重试 3 次（最后手段）
+  → 全部失败 → 502
+
+即：当前 level → 向下走 → 走完后向上走 → 全部失败 502
+```
+
+成本优先：失败时先找更便宜的，实在不行才用更贵的。
 
 ## 实现计划
 
@@ -87,17 +144,17 @@ claude-code-claw/
 
 验收：`python3 -c "import json; json.load(open('config/default-config.json'))"` 无报错
 
-**Task 1.2: `proxy.py`** — ~400 行，从 `~/cr-proxy.py` 演进
+**Task 1.2: `proxy.py`** — ~450 行，从 `~/cr-proxy.py` 演进
 
 核心改动：
 - 启动时加载 `~/.claude-code-claw/config.json`，缺失用 default-config.json
 - `ROUTE_LEVELS` 从配置构建，每个 provider 独立 `httpx.Client`
-- Session 状态持久化到 `~/.claude-code-claw/sessions/<session_id>.json`（原子写：写临时文件 + rename）
-- 失败升级：同 provider 重试 3 次 → fallback 到 level+1（1→2→3，唯一方向）
+- SQLite 存储：`~/.claude-code-claw/claw.db`（sessions 表 + usage 表）
+- Fallback：同 provider 重试 3 次 → 先降级（level-1）→ 再升级（level+1）→ 502
 - GLM 路由：替换 auth + model 字段
 - Anthropic 路由：透传全部 header（OAuth 兼容）
 - 签名修复：保留 StreamSignaturePatcher + fix_signatures + patch_json_signatures
-- 内置 token 追踪：解析响应 usage，按 session+level 累计
+- 内置 token 追踪：解析响应 usage，INSERT INTO usage 表
 
 端点清单：
 | 端点 | 方法 | 作用 |
@@ -129,26 +186,38 @@ cat ~/.claude-code-claw/sessions/test001.json  # 持久化验证
 curl --noproxy '*' -s http://127.0.0.1:3457/status?session=test001 | jq .level  # 仍然是 2
 ```
 
-**Task 1.3: `hooks/session-start.js`** — ~50 行
+**Task 1.3: `hooks/session-start.sh`** — ~30 行 bash
 
-参考：`~/work/clawd-on-desk/hooks/clawd-hook.js` 的 stdin 解析模式
+核心机制：`CLAUDE_ENV_FILE` 注入 `$CR_SESSION`
 
-流程：
-1. 读 stdin JSON → 提取 `session_id`
-2. `curl --noproxy '*' http://127.0.0.1:3457/register?session=<id>`（proxy 为 session 文件唯一写入者）
-3. stdout 输出 session 状态（注入模型上下文）：
+```bash
+#!/bin/bash
+# 从 stdin 读 session_id
+SESSION_ID=$(cat | python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null)
+[ -z "$SESSION_ID" ] && exit 0
+
+# 1. 注入环境变量（模型 Bash 工具自动可用）
+if [ -n "$CLAUDE_ENV_FILE" ]; then
+  echo "export CR_SESSION=$SESSION_ID" >> "$CLAUDE_ENV_FILE"
+fi
+
+# 2. 注册到 proxy
+curl --noproxy '*' -s -m 0.5 "http://127.0.0.1:3457/register?session=$SESSION_ID" >/dev/null 2>&1
+
+# 3. stdout 注入模型上下文
+STATUS=$(curl --noproxy '*' -s -m 0.5 "http://127.0.0.1:3457/status?session=$SESSION_ID" 2>/dev/null)
+LEVEL=$(echo "$STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('level',1))" 2>/dev/null || echo 1)
+echo "[claw] Session: ${SESSION_ID:0:8} | Level $LEVEL | /think-level 1|2|3 | /smoke | /redbull"
 ```
-[claw] Session: <session_id_short>
-Current: Level 1 (GLM) | /think-level 1|2|3 | /smoke | /redbull
-```
 
-时序预算：400ms stdin + 500ms HTTP = 900ms < 1s
+时序预算：stdin 立即读完（pipe）+ 2x curl 0.5s 超时 = ~1s
 
 验收：
 ```bash
-echo '{"session_id":"test-hook-001","source":"startup"}' | node hooks/session-start.js
-# stdout 应包含 [claw] Session: test-hoo
-# proxy 日志应显示 register
+# proxy 运行中
+echo '{"session_id":"test-001"}' | CLAUDE_ENV_FILE=/tmp/test-env bash hooks/session-start.sh
+grep CR_SESSION /tmp/test-env  # export CR_SESSION=test-001
+curl --noproxy '*' -s http://127.0.0.1:3457/status?session=test-001  # 已注册
 ```
 
 **Task 1.4: `CLAUDE.md`** — 项目级自动路由指令
@@ -269,16 +338,18 @@ python3 tools/usage-stats.py --all   # 全量统计
 
 ## 关键技术细节
 
-### 失败升级逻辑（唯一方向：1→2→3）
+### Fallback 逻辑（先降级再升级，成本优先）
 ```
-请求 level 1 (GLM) → 失败
+请求 level 2 (Sonnet) → 失败
   → 同 provider 重试 3 次（间隔 2s）
-  → 仍失败 → 升级到 level 2 (Sonnet) → 重试 3 次
-  → 仍失败 → 升级到 level 3 (Opus) → 重试 3 次
-  → 全部失败 → 返回 502 + 错误详情
+  → 降级 level 1 (GLM) → 重试 3 次    ← 先找更便宜的
+  → 升级 level 3 (Opus) → 重试 3 次    ← 最后手段
+  → 全部失败 → 返回 502
+
+顺序：当前 level → 向下逐级 → 向上逐级 → 502
 ```
 
-失败时总是往更强的模型走，不存在反向回退。用户主动 `/smoke` `/think-level` 是独立操作。
+用户主动 `/smoke` `/redbull` `/think-level` 不触发 fallback，直接切。
 
 ### Auth 路由
 - provider=glm：去掉原始 auth header，注入 provider.key
@@ -288,40 +359,54 @@ python3 tools/usage-stats.py --all   # 全量统计
 - 请求方向：`fix_signatures(messages)` 修复历史中 GLM 的空签名
 - 响应方向：`StreamSignaturePatcher` 修复 GLM 新返回的空签名（跨 chunk buffer 安全）
 
-### Session 持久化
-```
-~/.claude-code-claw/sessions/<session_id>.json
-{
-  "session_id": "e664a78a-...",
-  "level": 2,
-  "name": "sonnet",
-  "created_at": "...",
-  "updated_at": "...",
-  "usage": {"glm": {...}, "sonnet": {...}}
-}
-```
-写入方式：写临时文件 `<session_id>.json.tmp` → `os.fsync()` → `os.replace()` 原子替换
-**所有持久化（session、config）统一此协议。** proxy 为 session 文件唯一写入者。
+### 存储：SQLite
 
-### Hook 时序
+```
+~/.claude-code-claw/claw.db
+  sessions: session_id, level, created_at, updated_at
+  usage:    session_id, level, provider, input_tokens, output_tokens, cache_*, timestamp
+```
+
+SQLite 自带事务原子性、并发安全（WAL 模式）、模糊查询。proxy 为唯一写入者。
+
+### Hook 时序（CLAUDE_ENV_FILE 机制）
 ```
 claude 启动 → 生成 session_id → SessionStart hook 触发
-  → hook 读 stdin {"session_id":"xxx","source":"startup"}
-  → curl /register?session=xxx（proxy 收到后写 sessions/xxx.json）
-  → stdout: "[claw] Session: xxx | Level 1 (GLM) | /think-level 1|2|3 | /smoke | /redbull"
+  → hook 从 stdin 读 {"session_id":"xxx","source":"startup"}
+  → echo "export CR_SESSION=xxx" >> $CLAUDE_ENV_FILE    ← 注入环境变量
+  → curl /register?session=xxx                           ← 注册到 proxy（写 SQLite）
+  → stdout: "[claw] Session: xxx | Level 1 (GLM)"       ← 注入模型上下文
   → 模型加载 CLAUDE.md → 用户首条消息
-  → 模型只读 $CR_SESSION → 可 curl 切换（$CR_SESSION 为空则不切换）
+  → 模型 Bash 工具自动有 $CR_SESSION → curl 切换
 ```
 
-**Session 来源唯一性约束：** `$CR_SESSION` 是模型获取 session_id 的唯一来源。session 文件（`~/.claude-code-claw/sessions/*.json`）仅供 proxy 内部持久化和 `/status` `/stats` 查询使用，CLAUDE.md、skills、hooks 均不得把它作为 session 回退来源。
+**Session 来源唯一性：** `$CR_SESSION` 通过 `CLAUDE_ENV_FILE` 在 SessionStart 时注入，是模型获取 session_id 的唯一来源。无文件回退、无 ITERM_SESSION_ID、无 `latest` 概念。SQLite 仅供 proxy 内部使用。
+
+**user-prompt-submit hook** 同样使用 `$CR_SESSION`（已在环境中）：
+```bash
+STATUS=$(curl --noproxy '*' -s -m 0.5 "http://127.0.0.1:3457/status?session=$CR_SESSION")
+echo "[claw: Level $(echo $STATUS | python3 -c 'import sys,json;print(json.load(sys.stdin).get(\"level\",\"?\"))')]"
+```
 
 ### install.sh 合并策略
 - settings.json hooks 是数组，append 新条目
 - `python3 -c` 做 JSON 合并（幂等：检查 command 字符串已存在则跳过）
 - `--uninstall` 反向移除
 
-### 上下文保护
-- `cr()` 函数中 `export CLAUDE_CODE_DISABLE_1M_CONTEXT=1`，统一 200K
+### cr() 函数
+```bash
+cr() {
+  # 启动 proxy（如未运行）
+  curl --noproxy '*' -s http://127.0.0.1:3457/ &>/dev/null || {
+    PYTHONUNBUFFERED=1 nohup python3 ~/work/claude-code-claw/proxy.py >> /tmp/cr-proxy.log 2>&1 &
+    for i in {1..20}; do curl --noproxy '*' -s http://127.0.0.1:3457/ &>/dev/null && break; sleep 0.2; done
+  }
+  # CR_SESSION 不需要在这里设——SessionStart hook 通过 CLAUDE_ENV_FILE 自动注入
+  CLAUDE_CODE_DISABLE_1M_CONTEXT=1 NO_PROXY=127.0.0.1 ANTHROPIC_BASE_URL=http://127.0.0.1:3457 claude "$@"
+}
+```
+
+不再需要 `export CR_SESSION`、`ITERM_SESSION_ID`、`--resume` 解析。hook 自动处理一切。
 
 ## 现有代码引用
 
