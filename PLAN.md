@@ -307,12 +307,13 @@ python3 tools/usage-stats.py --all   # 全量统计
 ```
 claude 启动 → 生成 session_id → SessionStart hook 触发
   → hook 读 stdin {"session_id":"xxx","source":"startup"}
-  → curl /register?session=xxx
-  → 写 ~/.claude-code-claw/sessions/xxx.json
+  → curl /register?session=xxx（proxy 收到后写 sessions/xxx.json）
   → stdout: "[claw] Session: xxx | Level 1 (GLM) | /think-level 1|2|3 | /smoke | /redbull"
   → 模型加载 CLAUDE.md → 用户首条消息
-  → 模型读 $CR_SESSION 或 session 文件 → 可 curl 切换
+  → 模型只读 $CR_SESSION → 可 curl 切换（$CR_SESSION 为空则不切换）
 ```
+
+**Session 来源唯一性约束：** `$CR_SESSION` 是模型获取 session_id 的唯一来源。session 文件（`~/.claude-code-claw/sessions/*.json`）仅供 proxy 内部持久化和 `/status` `/stats` 查询使用，CLAUDE.md、skills、hooks 均不得把它作为 session 回退来源。
 
 ### install.sh 合并策略
 - settings.json hooks 是数组，append 新条目
