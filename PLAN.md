@@ -36,8 +36,8 @@ ROUTE_LEVELS = {
 - `/think-level?session=X&level=2` = 等效于 `/use-sonnet`
 - `/status?session=X` → `{"level": 2, "name": "sonnet", "label": "Sonnet"}`
 
-**失败升级链（唯一方向）：** 1 → 2 → 3（GLM 失败 → 试 Sonnet → 试 Opus）。
-不存在"降级"回退——失败时总是往更强的模型走。用户主动切换（/smoke /redbull /think-level）不受此限制。
+**Fallback 方向（成本优先）：** 失败时先降级（找更便宜的），降级走完再升级（最后手段）。
+顺序：当前 level → 向下逐级 → 向上逐级 → 502。用户主动切换不触发 fallback。
 
 ## 项目结构
 
@@ -47,7 +47,7 @@ claude-code-claw/
 ├── install.sh                   # 分步安装（--core --hooks --skills --shell）
 ├── hooks/
 │   ├── session-start.sh         # CLAUDE_ENV_FILE 注入 CR_SESSION + 注册 proxy
-│   └── user-prompt-submit.sh    # 注入当前 level 信息到模型上下文
+│   └── user-prompt-submit.sh    # 注入当前 level 到模型上下文（用 $CR_SESSION）
 ├── skills/
 │   ├── smoke/SKILL.md           # /smoke → 降到 level 1 (GLM)
 │   ├── redbull/SKILL.md         # /redbull → 升到 level 3 (Opus)
@@ -181,9 +181,9 @@ curl --noproxy '*' -s http://127.0.0.1:3457/register?session=test001
 curl --noproxy '*' -s http://127.0.0.1:3457/status?session=test001 | jq .level  # 1
 curl --noproxy '*' -s http://127.0.0.1:3457/use-sonnet?session=test001
 curl --noproxy '*' -s http://127.0.0.1:3457/status?session=test001 | jq .level  # 2
-cat ~/.claude-code-claw/sessions/test001.json  # 持久化验证
+sqlite3 ~/.claude-code-claw/claw.db "SELECT level FROM sessions WHERE session_id='test001'"  # 2
 # 重启 proxy 后：
-curl --noproxy '*' -s http://127.0.0.1:3457/status?session=test001 | jq .level  # 仍然是 2
+curl --noproxy '*' -s http://127.0.0.1:3457/status?session=test001 | jq .level  # 仍然是 2（从 SQLite 恢复）
 ```
 
 **Task 1.3: `hooks/session-start.sh`** — ~30 行 bash
