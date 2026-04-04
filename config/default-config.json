@@ -1,0 +1,15 @@
+{
+  "port": 3457,
+  "proxy": "http://127.0.0.1:7897",
+  "default_level": 1,
+  "levels": {
+    "1": {"name": "glm", "provider": "glm", "model": "glm-5.1"},
+    "2": {"name": "sonnet", "provider": "anthropic", "model": "claude-sonnet-4-6"},
+    "3": {"name": "opus", "provider": "anthropic", "model": "claude-opus-4-6"}
+  },
+  "providers": {
+    "glm": {"url": "https://open.bigmodel.cn/api/anthropic/v1/messages", "key": "YOUR_GLM_KEY_HERE"},
+    "anthropic": {"url": "https://api.anthropic.com", "passthrough_auth": true}
+  },
+  "retry": {"max_attempts": 3, "interval_seconds": 2}
+}

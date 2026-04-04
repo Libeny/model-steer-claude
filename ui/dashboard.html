@@ -1,0 +1,1758 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MSC</title>
+<style>
+/* ═══════════════════════════════════════════
+   MSC — Model Steer Claude
+   Anthropic-inspired warm light theme
+   ═══════════════════════════════════════════ */
+
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* Colors */
+  --bg: #faf9f7;
+  --surface: #ffffff;
+  --border: #e8e5df;
+  --border-hover: #d4cfc8;
+  --text-primary: #1a1a17;
+  --text-secondary: #6b6560;
+  --text-tertiary: #9b9590;
+  --accent: #c96442;
+  --accent-light: #fdf0eb;
+  --accent-dark: #a84e30;
+  --success: #2d8a56;
+  --success-bg: #ecf7f0;
+  --destructive: #d04040;
+  --destructive-bg: #fdeaea;
+
+  /* Typography */
+  --font-sans: -apple-system, 'SF Pro Text', 'Helvetica Neue', sans-serif;
+  --font-mono: 'SF Mono', 'Fira Code', monospace;
+
+  /* Effects */
+  --radius-card: 12px;
+  --radius-input: 8px;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  --shadow-elevated: 0 6px 24px rgba(0, 0, 0, 0.1);
+  --transition: 180ms ease;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--bg);
+  color: var(--text-primary);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ═══ Layout ═══ */
+.app {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 36px 20px 80px;
+}
+
+/* ═══ Header ═══ */
+.header {
+  margin-bottom: 28px;
+}
+.header-title {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  color: var(--text-primary);
+}
+.header-title em {
+  font-style: normal;
+  color: var(--accent);
+}
+.header-subtitle {
+  color: var(--text-tertiary);
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+/* ═══ Tabs ═══ */
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+}
+.tab {
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all var(--transition);
+  user-select: none;
+}
+.tab:hover {
+  color: var(--text-secondary);
+}
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.tab-content {
+  display: none;
+}
+.tab-content.active {
+  display: block;
+}
+
+/* ═══ Cards ═══ */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow);
+}
+
+/* ═══ Section ═══ */
+.section {
+  margin-bottom: 24px;
+}
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.3px;
+}
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 24px 0;
+}
+
+/* ═══ Buttons ═══ */
+.btn {
+  padding: 7px 14px;
+  border-radius: var(--radius-input);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: all var(--transition);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-sans);
+}
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.btn-primary:hover {
+  background: var(--accent-dark);
+  border-color: var(--accent-dark);
+}
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+.btn-ghost:hover {
+  background: var(--bg);
+  border-color: var(--border-hover);
+}
+.btn-small {
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.btn-icon {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  transition: all var(--transition);
+  font-family: var(--font-sans);
+}
+.btn-icon:hover {
+  background: var(--bg);
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
+.btn-icon.btn-destructive:hover {
+  background: var(--destructive-bg);
+  color: var(--destructive);
+  border-color: var(--destructive);
+}
+.btn-icon.btn-promote:hover {
+  background: var(--success-bg);
+  color: var(--success);
+  border-color: var(--success);
+}
+
+/* ═══ Model Items (Sorted / Priority) ═══ */
+.model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.model-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  cursor: grab;
+  transition: all var(--transition);
+  user-select: none;
+}
+.model-item:hover {
+  border-color: var(--border-hover);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+.model-item:active {
+  cursor: grabbing;
+}
+.model-item.dragging {
+  opacity: 0.35;
+  border-style: dashed;
+}
+.model-item.drag-over, .pool-item.drag-over {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+.model-list.drop-target, .pool-list.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: 4px;
+  border-radius: var(--radius-card);
+}
+.pool-item {
+  cursor: grab;
+}
+.pool-item:active {
+  cursor: grabbing;
+}
+.pool-item.dragging {
+  opacity: 0.3;
+  border-style: dashed;
+}
+.model-grip {
+  color: var(--text-tertiary);
+  font-size: 14px;
+  cursor: grab;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.model-rank {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+  background: var(--accent-light);
+  color: var(--accent);
+}
+.model-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.model-name {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+}
+.model-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.provider-tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 500;
+  background: var(--bg);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.model-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* ═══ Pool Items (Unsorted) ═══ */
+.pool-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pool-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-input);
+  transition: all var(--transition);
+}
+.pool-item:hover {
+  border-color: var(--border-hover);
+}
+.pool-item .model-body {
+  flex: 1;
+}
+.pool-item .model-name {
+  font-size: 12px;
+}
+.pool-item .model-meta {
+  font-size: 10px;
+}
+.alias-chip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-light);
+  padding: 2px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.pool-empty {
+  text-align: center;
+  padding: 24px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-input);
+}
+
+/* ═══ Action Bar ═══ */
+.action-bar {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+/* ═══ Modal ═══ */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(2px);
+  z-index: 50;
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 90px;
+}
+.overlay.show {
+  display: flex;
+}
+.modal {
+  background: var(--surface);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-elevated);
+  width: 500px;
+  max-width: 92vw;
+  animation: modalIn 200ms ease;
+}
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: none; }
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-header h3 {
+  font-size: 15px;
+  font-weight: 600;
+}
+.modal-body {
+  padding: 20px;
+}
+.modal-footer {
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ═══ Form ═══ */
+.field {
+  margin-bottom: 12px;
+}
+.field label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  letter-spacing: 0.2px;
+}
+.field input,
+.field select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-input);
+  font-size: 13px;
+  font-family: var(--font-sans);
+  background: var(--surface);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color var(--transition);
+}
+.field input:focus,
+.field select:focus {
+  border-color: var(--accent);
+}
+.field input::placeholder {
+  color: var(--text-tertiary);
+}
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* Type selector */
+.type-selector {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.type-option {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-input);
+  cursor: pointer;
+  text-align: center;
+  transition: all 150ms ease;
+}
+.type-option:hover {
+  border-color: var(--border-hover);
+}
+.type-option.active {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+.type-option-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.type-option-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+/* Preset chips */
+.chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.chip {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 150ms ease;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+}
+.chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.chip.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+/* Checkbox row */
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 10px;
+}
+.checkbox-row input[type="checkbox"] {
+  width: auto;
+  cursor: pointer;
+  accent-color: var(--accent);
+}
+
+/* Color picker */
+.color-picker {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.color-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 150ms ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #fff;
+}
+.color-dot:hover {
+  transform: scale(1.15);
+}
+.color-dot.selected {
+  border-color: var(--text-primary);
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--text-tertiary);
+}
+
+/* Read-only rank field in modal */
+.field input.readonly-rank {
+  background: var(--bg);
+  color: var(--text-secondary);
+  text-align: center;
+  font-weight: 700;
+  font-size: 16px;
+}
+
+/* ═══ Usage Tab ═══ */
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.stat-card {
+  padding: 16px;
+  text-align: center;
+}
+.stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+}
+.stat-value.green {
+  color: var(--success);
+}
+.stat-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 3px;
+}
+
+/* Table */
+.table-wrapper {
+  overflow-x: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  letter-spacing: 0.3px;
+}
+td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+tr:last-child td {
+  border-bottom: none;
+}
+tr:hover td {
+  background: var(--bg);
+}
+.session-id {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+.model-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  background: var(--bg);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.usage-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg);
+  overflow: hidden;
+  min-width: 100px;
+  display: flex;
+}
+.usage-bar div {
+  height: 100%;
+}
+/* bar segments now get inline background colors from JS */
+.saved-text {
+  color: var(--success);
+  font-weight: 600;
+}
+.legend {
+  display: flex;
+  gap: 14px;
+  margin-top: 8px;
+  padding: 0 4px;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.legend-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* ═══ Empty state ═══ */
+.empty-state {
+  text-align: center;
+  padding: 40px 16px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+.empty-state-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+/* ═══ Toast ═══ */
+.toast {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  padding: 10px 18px;
+  border-radius: var(--radius-input);
+  font-size: 13px;
+  font-weight: 500;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-elevated);
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: all 200ms ease;
+  z-index: 100;
+  pointer-events: none;
+}
+.toast.show {
+  opacity: 1;
+  transform: none;
+}
+.toast.success {
+  border-color: var(--success);
+  color: var(--success);
+}
+.toast.error {
+  border-color: var(--destructive);
+  color: var(--destructive);
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+  <!-- Header -->
+  <div class="header">
+    <div class="header-title"><em>MSC</em></div>
+    <div class="header-subtitle">模型方向盘 · 让 Claude Code / Claw 自己选模型</div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab(0)">模型配置</div>
+    <div class="tab" onclick="switchTab(1)">用量统计</div>
+    <div class="tab" onclick="switchTab(2)">CoT</div>
+  </div>
+
+  <!-- ═══ Tab 1: 模型配置 ═══ -->
+  <div class="tab-content active" id="tab-config">
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">模型等级</div>
+        <button class="btn btn-primary btn-small" onclick="openAddModal()">+ 新增模型</button>
+      </div>
+      <div class="model-list" id="sorted-list"
+        ondragover="handleZoneDragOver(event,'sorted')"
+        ondragleave="handleZoneDragLeave(event,'sorted')"
+        ondrop="handleZoneDrop(event,'sorted')"></div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="section">
+      <div class="section-header">
+        <div class="section-title">可用模型（未排序）</div>
+      </div>
+      <div class="pool-list" id="pool-list"
+        ondragover="handleZoneDragOver(event,'pool')"
+        ondragleave="handleZoneDragLeave(event,'pool')"
+        ondrop="handleZoneDrop(event,'pool')"></div>
+    </div>
+
+    <div class="action-bar">
+      <button class="btn btn-ghost" onclick="undoChanges()">撤销修改</button>
+      <button class="btn btn-primary" onclick="saveConfig()">保存配置</button>
+    </div>
+  </div>
+
+  <!-- ═══ Tab 2: 用量统计 ═══ -->
+  <div class="tab-content" id="tab-usage">
+    <div class="stat-row">
+      <div class="card stat-card">
+        <div class="stat-value" id="stat-tokens">-</div>
+        <div class="stat-label">总 Token</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-value" id="stat-cost">-</div>
+        <div class="stat-label">混合模式费用</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-value green" id="stat-saved">-</div>
+        <div class="stat-label" id="stat-saved-label">相比纯 Claude 模式</div>
+      </div>
+    </div>
+
+    <div class="card" style="padding: 0 0 4px;">
+      <div class="table-wrapper">
+        <table>
+          <thead>
+            <tr>
+              <th>Session</th>
+              <th>当前模型</th>
+              <th>模型分布</th>
+              <th>Token</th>
+              <th>节省</th>
+            </tr>
+          </thead>
+          <tbody id="session-tbody">
+            <tr><td colspan="5" class="empty-state">加载中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="legend" id="usage-legend"></div>
+  </div>
+
+  <!-- ═══ Tab 3: CoT ═══ -->
+  <div class="tab-content" id="tab-cot">
+    <div class="empty-state">
+      <div class="empty-state-title">Chain of Thought</div>
+      <div>即将推出</div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Unified Model Modal (Add / Edit) ═══ -->
+<div class="overlay" id="model-overlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="modal-title">新增模型</h3>
+      <button class="btn-icon" onclick="closeModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <!-- Read-only rank (edit mode only) -->
+      <div class="field" id="modal-rank-field" style="display:none">
+        <label>等级</label>
+        <input id="modal-rank" class="readonly-rank" readonly>
+      </div>
+
+      <!-- Type selector -->
+      <div class="type-selector" id="modal-type-selector">
+        <div class="type-option active" onclick="selectType('claude', this)">
+          <div class="type-option-title">官方 Claude</div>
+          <div class="type-option-desc">OAuth 透传</div>
+        </div>
+        <div class="type-option" onclick="selectType('custom', this)">
+          <div class="type-option-title">自定义 API</div>
+          <div class="type-option-desc">兼容接口</div>
+        </div>
+      </div>
+
+      <!-- Claude fields -->
+      <div id="fields-claude">
+        <div class="field">
+          <label>模型</label>
+          <select id="add-claude-model">
+            <option value="claude-opus-4-6">Claude Opus 4.6</option>
+            <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+            <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>显示名称</label>
+            <input id="add-claude-name" placeholder="opus">
+          </div>
+          <div class="field">
+            <label>别名命令</label>
+            <input id="add-claude-alias" placeholder="co">
+          </div>
+        </div>
+      </div>
+
+      <!-- Custom fields -->
+      <div id="fields-custom" style="display:none">
+        <div class="field" id="preset-field">
+          <label>预设</label>
+          <div class="chips">
+            <div class="chip active" onclick="applyPreset('glm', this)">GLM</div>
+            <div class="chip" onclick="applyPreset('deepseek', this)">DeepSeek</div>
+            <div class="chip" onclick="applyPreset('moonshot', this)">Moonshot</div>
+            <div class="chip" onclick="applyPreset('qwen', this)">Qwen</div>
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>显示名称</label>
+            <input id="add-custom-name" placeholder="glm">
+          </div>
+          <div class="field">
+            <label>别名命令</label>
+            <input id="add-custom-alias" placeholder="cg">
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>API 地址</label>
+            <input id="add-custom-url" placeholder="https://...">
+          </div>
+          <div class="field">
+            <label>模型名称</label>
+            <input id="add-custom-model" placeholder="glm-5.1">
+          </div>
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>API Key</label>
+            <input id="add-custom-key" type="password" placeholder="sk-...">
+          </div>
+          <div class="field">
+            <label>代理（可选）</label>
+            <input id="add-custom-proxy" placeholder="http://127.0.0.1:7897">
+          </div>
+        </div>
+      </div>
+
+      <!-- Color picker -->
+      <div class="field">
+        <label>模型颜色</label>
+        <div class="color-picker" id="color-picker"></div>
+      </div>
+
+      <!-- Add to levels checkbox (add mode only) -->
+      <label class="checkbox-row" id="add-to-levels-row">
+        <input type="checkbox" id="add-to-levels" checked>
+        添加到模型等级
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+      <button class="btn btn-primary" id="modal-submit-btn" onclick="submitModal()">添加</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ═══════════════════════════════════════════
+   MSC — Dashboard Logic
+   ═══════════════════════════════════════════ */
+
+const API_BASE = '';
+
+const PRICE = {
+  glm:       { input: 0.55, output: 2.48 },
+  anthropic: { input: 5,    output: 25   }
+};
+
+const PRESETS = {
+  glm:      { url: 'https://open.bigmodel.cn/api/anthropic/v1/messages',          model: 'glm-5.1',          name: 'glm',      alias: 'cg' },
+  deepseek: { url: 'https://api.deepseek.com/v1/messages',                        model: 'deepseek-chat',    name: 'deepseek',  alias: 'cd' },
+  moonshot: { url: 'https://api.moonshot.cn/v1/messages',                          model: 'moonshot-v1-auto', name: 'moonshot',  alias: 'cm' },
+  qwen:     { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/messages',   model: 'qwen-max',        name: 'qwen',      alias: 'cq' }
+};
+
+const COLOR_PALETTE = [
+  '#c96442', '#2d8a56', '#4a6fa5', '#7c5cbf',
+  '#d97706', '#0891b2', '#6366f1', '#9b9590'
+];
+
+const CNY_RATE = 7.25; // approximate USD to CNY
+
+let config = null;
+let configSnapshot = null;
+let currentAddType = 'claude';
+let dragSourceEl = null;
+let modalMode = 'add'; // 'add' or 'edit'
+let editIdx = -1;
+let selectedColor = COLOR_PALETTE[0];
+
+// ═══════════════════════════════════════════
+// Tab switching
+// ═══════════════════════════════════════════
+
+function switchTab(index) {
+  var tabs = document.querySelectorAll('.tab');
+  var contents = document.querySelectorAll('.tab-content');
+  for (var i = 0; i < tabs.length; i++) {
+    tabs[i].classList.toggle('active', i === index);
+    contents[i].classList.toggle('active', i === index);
+  }
+  if (index === 1) loadUsage();
+}
+
+// ═══════════════════════════════════════════
+// Init
+// ═══════════════════════════════════════════
+
+async function init() {
+  try {
+    var resp = await fetch(API_BASE + '/config');
+    config = await resp.json();
+    configSnapshot = JSON.stringify(config);
+    render();
+  } catch (e) {
+    showToast('加载配置失败', 'error');
+  }
+}
+
+// ═══════════════════════════════════════════
+// Render
+// ═══════════════════════════════════════════
+
+function render() {
+  renderSorted();
+  renderPool();
+}
+
+function renderSorted() {
+  var el = document.getElementById('sorted-list');
+  var sorted = getSortedLevels();
+
+  if (!sorted.length) {
+    el.innerHTML = '<div class="pool-empty">暂无排序模型，点击「+ 新增模型」添加</div>';
+    return;
+  }
+
+  el.innerHTML = sorted.map(function(entry, i) {
+    var level = entry[1];
+    var provLabel = level.provider === 'anthropic' ? '官方' : '自定义';
+    var aliasHtml = level.alias ? '<span class="alias-chip">' + escHtml(level.alias) + '</span>' : '';
+    var colorDot = level.color ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + escHtml(level.color) + ';flex-shrink:0"></span>' : '';
+
+    return '<div class="model-item" draggable="true" data-index="' + i + '"' +
+      ' ondragstart="handleDragStart(event)"' +
+      ' ondragend="handleDragEnd(event)"' +
+      ' ondragover="handleDragOver(event)"' +
+      ' ondragleave="handleDragLeave(event)"' +
+      ' ondrop="handleDrop(event)"' +
+      ' onclick="openEdit(' + i + ', event)"' +
+      ' style="cursor:pointer">' +
+      '<div class="model-grip">\u2807</div>' +
+      '<div class="model-rank">' + (i + 1) + '</div>' +
+      '<div class="model-body">' +
+        '<div>' +
+          '<div class="model-name">' + escHtml((level.name || '?').toUpperCase()) + '</div>' +
+          '<div class="model-meta">' + escHtml(level.model) + '</div>' +
+        '</div>' +
+        colorDot +
+        '<span class="provider-tag">' + provLabel + '</span>' +
+        aliasHtml +
+      '</div>' +
+      '<div class="model-actions">' +
+        '<button class="btn btn-ghost btn-small" onclick="moveToPool(' + i + ', event)">移出</button>' +
+        '<button class="btn-icon btn-destructive" title="删除" onclick="deleteSorted(' + i + ', event)">\u00d7</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function renderPool() {
+  var el = document.getElementById('pool-list');
+  var pool = config._pool || [];
+
+  if (!pool.length) {
+    el.innerHTML = '<div class="pool-empty">没有未排序的模型</div>';
+    return;
+  }
+
+  el.innerHTML = pool.map(function(item, i) {
+    var provLabel = item.provider === 'anthropic' ? '官方' : '自定义';
+    var aliasHtml = item.alias ? '<span class="alias-chip">' + escHtml(item.alias) + '</span>' : '';
+
+    return '<div class="pool-item" draggable="true" data-pool-index="' + i + '"' +
+      ' ondragstart="handleDragStart(event)"' +
+      ' ondragend="handleDragEnd(event)"' +
+      ' ondragover="handleDragOver(event)"' +
+      ' ondragleave="handleDragLeave(event)"' +
+      ' ondrop="handleDrop(event)">' +
+      '<div class="model-grip">\u2807</div>' +
+      '<div class="model-body">' +
+        '<div>' +
+          '<div class="model-name">' + escHtml((item.name || '?').toUpperCase()) + '</div>' +
+          '<div class="model-meta">' + escHtml(provLabel) + ' \u00b7 ' + escHtml(item.model) + '</div>' +
+        '</div>' +
+        aliasHtml +
+      '</div>' +
+      '<button class="btn btn-ghost btn-small" onclick="moveToSorted(' + i + ')">\u2191 加入等级</button>' +
+      '<button class="btn-icon btn-destructive" title="删除" onclick="deletePool(' + i + ')">\u00d7</button>' +
+    '</div>';
+  }).join('');
+}
+
+// ═══════════════════════════════════════════
+// Helpers
+// ═══════════════════════════════════════════
+
+function getSortedLevels() {
+  if (!config || !config.levels) return [];
+  return Object.entries(config.levels).sort(function(a, b) {
+    return Number(a[0]) - Number(b[0]);
+  });
+}
+
+function rebuildLevels(arr) {
+  var levels = {};
+  arr.forEach(function(item, i) {
+    levels[String(i + 1)] = item;
+  });
+  config.levels = levels;
+}
+
+function escHtml(str) {
+  var d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+// ═══════════════════════════════════════════
+// Color Picker
+// ═══════════════════════════════════════════
+
+function getUsedColors() {
+  var used = {};
+  var sorted = getSortedLevels();
+  sorted.forEach(function(entry) {
+    if (entry[1].color) used[entry[1].color] = true;
+  });
+  var pool = config._pool || [];
+  pool.forEach(function(item) {
+    if (item.color) used[item.color] = true;
+  });
+  return used;
+}
+
+function getDefaultColor() {
+  var used = getUsedColors();
+  for (var i = 0; i < COLOR_PALETTE.length; i++) {
+    if (!used[COLOR_PALETTE[i]]) return COLOR_PALETTE[i];
+  }
+  return '#9b9590';
+}
+
+function renderColorPicker(selected) {
+  var picker = document.getElementById('color-picker');
+  selectedColor = selected || getDefaultColor();
+  picker.innerHTML = COLOR_PALETTE.map(function(c) {
+    var isSelected = c === selectedColor;
+    return '<div class="color-dot' + (isSelected ? ' selected' : '') + '"' +
+      ' style="background:' + c + '"' +
+      ' onclick="pickColor(\'' + c + '\')">' +
+      (isSelected ? '\u2713' : '') +
+    '</div>';
+  }).join('');
+}
+
+function pickColor(color) {
+  selectedColor = color;
+  var dots = document.querySelectorAll('#color-picker .color-dot');
+  for (var i = 0; i < dots.length; i++) {
+    var isThis = COLOR_PALETTE[i] === color;
+    dots[i].classList.toggle('selected', isThis);
+    dots[i].textContent = isThis ? '\u2713' : '';
+  }
+}
+
+// ═══════════════════════════════════════════
+// Drag and Drop
+// ═══════════════════════════════════════════
+
+function handleDragStart(e) {
+  dragSourceEl = e.currentTarget;
+  dragSourceEl.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  // Mark source zone
+  dragSourceEl._fromPool = dragSourceEl.hasAttribute('data-pool-index');
+  dragSourceEl._fromIdx = dragSourceEl._fromPool
+    ? Number(dragSourceEl.getAttribute('data-pool-index'))
+    : Number(dragSourceEl.getAttribute('data-index'));
+}
+
+function handleDragEnd(e) {
+  e.currentTarget.classList.remove('dragging');
+  document.querySelectorAll('.model-item, .pool-item').forEach(function(el) {
+    el.classList.remove('drag-over');
+  });
+  document.querySelectorAll('.model-list, .pool-list').forEach(function(el) {
+    el.classList.remove('drop-target');
+  });
+  dragSourceEl = null;
+}
+
+function handleDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  if (e.currentTarget !== dragSourceEl) {
+    e.currentTarget.classList.add('drag-over');
+  }
+}
+
+function handleDragLeave(e) {
+  e.currentTarget.classList.remove('drag-over');
+}
+
+// Zone-level drop handlers (for cross-zone dragging)
+function handleZoneDragOver(e, zone) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.classList.add('drop-target');
+}
+function handleZoneDragLeave(e, zone) {
+  e.currentTarget.classList.remove('drop-target');
+}
+function handleZoneDrop(e, zone) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drop-target');
+  if (!dragSourceEl) return;
+
+  // Only handle cross-zone drops (not item-to-item within sorted)
+  var fromPool = dragSourceEl._fromPool;
+  var fromIdx = dragSourceEl._fromIdx;
+
+  if (zone === 'sorted' && fromPool) {
+    // Pool → Sorted: add to end of sorted
+    moveToSorted(fromIdx);
+  } else if (zone === 'pool' && !fromPool) {
+    // Sorted → Pool: move out
+    moveToPool(fromIdx);
+  }
+  // Same-zone drops on the container are ignored (handled by item-level handleDrop)
+}
+
+function handleDrop(e) {
+  e.preventDefault();
+  var target = e.currentTarget;
+  target.classList.remove('drag-over');
+
+  if (!dragSourceEl || target === dragSourceEl) return;
+
+  // Cross-zone: pool item dropped ON a sorted item → insert at that position
+  if (dragSourceEl._fromPool && target.hasAttribute('data-index')) {
+    var poolIdx = dragSourceEl._fromIdx;
+    var insertAt = Number(target.getAttribute('data-index'));
+    var pool = config._pool || [];
+    var item = pool[poolIdx];
+    if (!item) return;
+    pool.splice(poolIdx, 1);
+    var sorted = getSortedLevels().map(function(e) { return e[1]; });
+    sorted.splice(insertAt, 0, item);
+    rebuildLevels(sorted);
+    render();
+    toast('已加入等级');
+    return;
+  }
+
+  // Cross-zone: sorted item dropped ON a pool item → move to pool
+  if (!dragSourceEl._fromPool && target.hasAttribute('data-pool-index')) {
+    moveToPool(dragSourceEl._fromIdx);
+    return;
+  }
+
+  // Same-zone sorted reorder
+  var list = document.getElementById('sorted-list');
+  var items = Array.from(list.querySelectorAll('.model-item'));
+  var fromIdx = items.indexOf(dragSourceEl);
+  var toIdx = items.indexOf(target);
+
+  if (fromIdx < 0 || toIdx < 0) return;
+
+  // Reorder in config
+  var sorted = getSortedLevels().map(function(e) { return e[1]; });
+  var moved = sorted.splice(fromIdx, 1)[0];
+  sorted.splice(toIdx, 0, moved);
+  rebuildLevels(sorted);
+  render();
+}
+
+// ═══════════════════════════════════════════
+// Unified Modal (Add / Edit)
+// ═══════════════════════════════════════════
+
+function openAddModal() {
+  modalMode = 'add';
+  editIdx = -1;
+  currentAddType = 'claude';
+  resetModalFields();
+  updateTypeSelection();
+
+  document.getElementById('modal-title').textContent = '新增模型';
+  document.getElementById('modal-rank-field').style.display = 'none';
+  document.getElementById('add-to-levels-row').style.display = '';
+  document.getElementById('modal-submit-btn').textContent = '添加';
+  document.getElementById('modal-submit-btn').onclick = submitModal;
+  document.getElementById('modal-type-selector').style.pointerEvents = '';
+  document.getElementById('modal-type-selector').style.opacity = '';
+  document.getElementById('preset-field').style.display = '';
+
+  renderColorPicker(getDefaultColor());
+  document.getElementById('model-overlay').classList.add('show');
+}
+
+function openEdit(idx, e) {
+  if (e.target.closest('.btn, .btn-icon, .model-grip')) return;
+  var sorted = getSortedLevels();
+  if (!sorted[idx]) return;
+
+  modalMode = 'edit';
+  editIdx = idx;
+  var item = sorted[idx][1];
+
+  // Set type
+  var isCustom = item.provider !== 'anthropic';
+  currentAddType = isCustom ? 'custom' : 'claude';
+
+  // Update type selector visual
+  var options = document.querySelectorAll('#modal-type-selector .type-option');
+  options[0].classList.toggle('active', !isCustom);
+  options[1].classList.toggle('active', isCustom);
+  updateTypeSelection();
+
+  // Show rank, hide checkbox
+  document.getElementById('modal-title').textContent = '编辑模型';
+  document.getElementById('modal-rank-field').style.display = '';
+  document.getElementById('modal-rank').value = (idx + 1);
+  document.getElementById('add-to-levels-row').style.display = 'none';
+  document.getElementById('modal-submit-btn').textContent = '保存';
+  document.getElementById('modal-submit-btn').onclick = submitModal;
+  // Type selector still clickable in edit mode (to switch provider type if desired)
+  document.getElementById('modal-type-selector').style.pointerEvents = '';
+  document.getElementById('modal-type-selector').style.opacity = '';
+  document.getElementById('preset-field').style.display = isCustom ? '' : 'none';
+
+  // Fill fields based on type
+  if (!isCustom) {
+    // Claude type
+    var modelSelect = document.getElementById('add-claude-model');
+    for (var i = 0; i < modelSelect.options.length; i++) {
+      if (modelSelect.options[i].value === item.model) {
+        modelSelect.selectedIndex = i;
+        break;
+      }
+    }
+    document.getElementById('add-claude-name').value = item.name || '';
+    document.getElementById('add-claude-alias').value = item.alias || '';
+  } else {
+    // Custom type
+    document.getElementById('add-custom-name').value = item.name || '';
+    document.getElementById('add-custom-alias').value = item.alias || '';
+    document.getElementById('add-custom-model').value = item.model || '';
+    if (config.providers && config.providers[item.provider]) {
+      var prov = config.providers[item.provider];
+      document.getElementById('add-custom-url').value = prov.url || '';
+      document.getElementById('add-custom-key').value = prov.key || '';
+      document.getElementById('add-custom-proxy').value = prov.proxy || '';
+    } else {
+      document.getElementById('add-custom-url').value = '';
+      document.getElementById('add-custom-key').value = '';
+      document.getElementById('add-custom-proxy').value = '';
+    }
+    // Deactivate all preset chips in edit mode
+    var chips = document.querySelectorAll('#fields-custom .chip');
+    for (var i = 0; i < chips.length; i++) {
+      chips[i].classList.remove('active');
+    }
+  }
+
+  renderColorPicker(item.color || getDefaultColor());
+  document.getElementById('model-overlay').classList.add('show');
+}
+
+function closeModal() {
+  document.getElementById('model-overlay').classList.remove('show');
+  editIdx = -1;
+  modalMode = 'add';
+}
+
+function selectType(type, el) {
+  currentAddType = type;
+  var options = document.querySelectorAll('#modal-type-selector .type-option');
+  for (var i = 0; i < options.length; i++) {
+    options[i].classList.remove('active');
+  }
+  el.classList.add('active');
+  updateTypeSelection();
+}
+
+function updateTypeSelection() {
+  document.getElementById('fields-claude').style.display = currentAddType === 'claude' ? 'block' : 'none';
+  document.getElementById('fields-custom').style.display = currentAddType === 'custom' ? 'block' : 'none';
+}
+
+function resetModalFields() {
+  var ids = ['add-claude-name', 'add-claude-alias', 'add-custom-name', 'add-custom-alias',
+             'add-custom-url', 'add-custom-model', 'add-custom-key', 'add-custom-proxy'];
+  ids.forEach(function(id) {
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('add-to-levels').checked = true;
+  document.getElementById('add-claude-model').selectedIndex = 0;
+  // Reset chips
+  var chips = document.querySelectorAll('#fields-custom .chip');
+  for (var i = 0; i < chips.length; i++) {
+    chips[i].classList.toggle('active', i === 0);
+  }
+  // Apply GLM preset by default
+  applyPresetValues('glm');
+}
+
+function applyPreset(key, el) {
+  var chips = document.querySelectorAll('#fields-custom .chip');
+  for (var i = 0; i < chips.length; i++) {
+    chips[i].classList.remove('active');
+  }
+  el.classList.add('active');
+  applyPresetValues(key);
+}
+
+function applyPresetValues(key) {
+  var p = PRESETS[key];
+  if (!p) return;
+  document.getElementById('add-custom-name').value = p.name;
+  document.getElementById('add-custom-url').value = p.url;
+  document.getElementById('add-custom-model').value = p.model;
+  document.getElementById('add-custom-alias').value = p.alias || '';
+}
+
+function submitModal() {
+  if (modalMode === 'edit') {
+    submitEdit();
+  } else {
+    submitAdd();
+  }
+}
+
+function submitAdd() {
+  var addToLevels = document.getElementById('add-to-levels').checked;
+  var item;
+
+  if (currentAddType === 'claude') {
+    var model = document.getElementById('add-claude-model').value;
+    var name = document.getElementById('add-claude-name').value.trim() || model.split('-').slice(1, 2)[0] || 'claude';
+    var alias = document.getElementById('add-claude-alias').value.trim();
+    item = { name: name, provider: 'anthropic', model: model };
+    if (alias) item.alias = alias;
+  } else {
+    var name = document.getElementById('add-custom-name').value.trim();
+    var url = document.getElementById('add-custom-url').value.trim();
+    var model = document.getElementById('add-custom-model').value.trim();
+    var key = document.getElementById('add-custom-key').value.trim();
+    var alias = document.getElementById('add-custom-alias').value.trim();
+    var proxy = document.getElementById('add-custom-proxy').value.trim();
+
+    if (!name || !url || !model) {
+      showToast('请填写必要字段', 'error');
+      return;
+    }
+
+    var providerName = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!config.providers) config.providers = {};
+    var providerConfig = { url: url };
+    if (key) providerConfig.key = key;
+    if (proxy) providerConfig.proxy = proxy;
+    config.providers[providerName] = providerConfig;
+
+    item = { name: name, provider: providerName, model: model };
+    if (alias) item.alias = alias;
+  }
+
+  item.color = selectedColor;
+
+  if (addToLevels) {
+    var sorted = getSortedLevels().map(function(e) { return e[1]; });
+    sorted.push(item);
+    rebuildLevels(sorted);
+  } else {
+    if (!config._pool) config._pool = [];
+    config._pool.push(item);
+  }
+
+  render();
+  closeModal();
+  showToast('已添加');
+}
+
+function submitEdit() {
+  if (editIdx < 0) return;
+  var sorted = getSortedLevels();
+  var key = sorted[editIdx][0];
+  var item = config.levels[key];
+
+  if (currentAddType === 'claude') {
+    item.name = document.getElementById('add-claude-name').value.trim() || item.name;
+    item.model = document.getElementById('add-claude-model').value;
+    var alias = document.getElementById('add-claude-alias').value.trim();
+    item.alias = alias || undefined;
+    // If switching from custom to claude
+    if (item.provider !== 'anthropic') {
+      item.provider = 'anthropic';
+    }
+  } else {
+    var name = document.getElementById('add-custom-name').value.trim();
+    var url = document.getElementById('add-custom-url').value.trim();
+    var model = document.getElementById('add-custom-model').value.trim();
+    var apiKey = document.getElementById('add-custom-key').value.trim();
+    var alias = document.getElementById('add-custom-alias').value.trim();
+    var proxy = document.getElementById('add-custom-proxy').value.trim();
+
+    item.name = name || item.name;
+    item.model = model || item.model;
+    item.alias = alias || undefined;
+
+    var providerName = (name || item.name).toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (!config.providers) config.providers = {};
+    var providerConfig = config.providers[providerName] || {};
+    if (url) providerConfig.url = url;
+    if (apiKey) providerConfig.key = apiKey;
+    if (proxy) providerConfig.proxy = proxy;
+    config.providers[providerName] = providerConfig;
+    item.provider = providerName;
+  }
+
+  item.color = selectedColor;
+
+  closeModal();
+  render();
+  showToast('已更新');
+}
+
+// ═══════════════════════════════════════════
+// Move / Delete
+// ═══════════════════════════════════════════
+
+function moveToPool(idx, e) {
+  if (e) e.stopPropagation();
+  var sorted = getSortedLevels();
+  var item = sorted[idx][1];
+  var remaining = sorted.map(function(e) { return e[1]; });
+  remaining.splice(idx, 1);
+  rebuildLevels(remaining);
+  if (!config._pool) config._pool = [];
+  config._pool.push(item);
+  render();
+}
+
+function moveToSorted(idx) {
+  var pool = config._pool || [];
+  var item = pool[idx];
+  pool.splice(idx, 1);
+  var sorted = getSortedLevels().map(function(e) { return e[1]; });
+  sorted.push(item);
+  rebuildLevels(sorted);
+  render();
+}
+
+function deleteSorted(idx, e) {
+  if (e) e.stopPropagation();
+  var sorted = getSortedLevels();
+  var name = (sorted[idx][1].name || '?').toUpperCase();
+  if (!confirm('\u5220\u9664 ' + name + ' \uff1f')) return;
+  var remaining = sorted.map(function(e) { return e[1]; });
+  remaining.splice(idx, 1);
+  rebuildLevels(remaining);
+  render();
+  showToast('\u5df2\u5220\u9664 ' + name);
+}
+
+function deletePool(idx) {
+  var pool = config._pool || [];
+  var name = (pool[idx].name || '?').toUpperCase();
+  if (!confirm('\u5220\u9664 ' + name + ' \uff1f')) return;
+  pool.splice(idx, 1);
+  render();
+  showToast('\u5df2\u5220\u9664 ' + name);
+}
+
+// ═══════════════════════════════════════════
+// Undo / Save
+// ═══════════════════════════════════════════
+
+function undoChanges() {
+  if (!configSnapshot) return;
+  config = JSON.parse(configSnapshot);
+  render();
+  showToast('已撤销修改');
+}
+
+async function saveConfig() {
+  try {
+    var resp = await fetch(API_BASE + '/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config)
+    });
+    if (resp.ok) {
+      configSnapshot = JSON.stringify(config);
+      showToast('配置已保存', 'success');
+    } else {
+      showToast('保存失败', 'error');
+    }
+  } catch (e) {
+    showToast('保存失败', 'error');
+  }
+}
+
+// ═══════════════════════════════════════════
+// Usage Tab
+// ═══════════════════════════════════════════
+
+function getProviderColor(providerName) {
+  // Look up color from config levels by provider name
+  if (config && config.levels) {
+    var sorted = getSortedLevels();
+    for (var i = 0; i < sorted.length; i++) {
+      if (sorted[i][1].provider === providerName && sorted[i][1].color) {
+        return sorted[i][1].color;
+      }
+    }
+  }
+  // Check pool too
+  if (config && config._pool) {
+    for (var i = 0; i < config._pool.length; i++) {
+      if (config._pool[i].provider === providerName && config._pool[i].color) {
+        return config._pool[i].color;
+      }
+    }
+  }
+  return '#9b9590'; // default gray
+}
+
+async function loadUsage() {
+  try {
+    var resp = await fetch(API_BASE + '/sessions');
+    var sessions = await resp.json();
+    renderStats(sessions);
+    renderSessionTable(sessions);
+    renderLegend(sessions);
+  } catch (e) {
+    document.getElementById('session-tbody').innerHTML =
+      '<tr><td colspan="5" class="empty-state">无法加载数据</td></tr>';
+  }
+}
+
+function renderStats(sessions) {
+  var totalTokens = 0;
+  var mixedCost = 0;
+  var fullCost = 0;
+
+  sessions.forEach(function(s) {
+    (s.usage || []).forEach(function(u) {
+      var inp = u.input_tokens || 0;
+      var out = u.output_tokens || 0;
+      totalTokens += inp + out;
+
+      var p = PRICE[u.provider] || PRICE.anthropic;
+      mixedCost += (inp / 1e6) * p.input + (out / 1e6) * p.output;
+      fullCost += (inp / 1e6) * PRICE.anthropic.input + (out / 1e6) * PRICE.anthropic.output;
+    });
+  });
+
+  document.getElementById('stat-tokens').textContent = totalTokens.toLocaleString();
+  document.getElementById('stat-cost').textContent = '$' + mixedCost.toFixed(3);
+
+  var saved = fullCost - mixedCost;
+  var pct = fullCost > 0 ? Math.round((saved / fullCost) * 100) : 0;
+  var cny = (saved * CNY_RATE).toFixed(2);
+  document.getElementById('stat-saved').textContent =
+    saved > 0 ? '-$' + saved.toFixed(3) + ' (' + pct + '%)' : '$0.000';
+  document.getElementById('stat-saved-label').textContent =
+    saved > 0 ? '相比纯 Claude 模式 · 约 \u00a5' + cny : '相比纯 Claude 模式';
+}
+
+function renderSessionTable(sessions) {
+  var tbody = document.getElementById('session-tbody');
+
+  if (!sessions.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">暂无会话</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = sessions.map(function(s) {
+    var byProvider = {};
+    var total = 0;
+
+    (s.usage || []).forEach(function(u) {
+      var t = (u.input_tokens || 0) + (u.output_tokens || 0);
+      byProvider[u.provider] = (byProvider[u.provider] || 0) + t;
+      total += t;
+    });
+
+    // Build bar segments for each provider with their configured color
+    var barSegments = '';
+    Object.keys(byProvider).forEach(function(p) {
+      var pct = total > 0 ? (byProvider[p] / total * 100) : 0;
+      var color = getProviderColor(p);
+      barSegments += '<div style="width:' + pct + '%;height:100%;background:' + color + '"></div>';
+    });
+
+    // Calculate savings
+    var fullCost = 0;
+    var mixedCost = 0;
+    (s.usage || []).forEach(function(u) {
+      var inp = u.input_tokens || 0;
+      var out = u.output_tokens || 0;
+      var p = PRICE[u.provider] || PRICE.anthropic;
+      mixedCost += (inp / 1e6) * p.input + (out / 1e6) * p.output;
+      fullCost += (inp / 1e6) * PRICE.anthropic.input + (out / 1e6) * PRICE.anthropic.output;
+    });
+    var saved = fullCost - mixedCost;
+    var savedPct = fullCost > 0 ? Math.round((saved / fullCost) * 100) : 0;
+
+    var modelName = (s.name || s.current_model || '?').toUpperCase();
+    var sessionId = (s.session_id || '').substring(0, 8);
+
+    return '<tr>' +
+      '<td><span class="session-id">' + escHtml(sessionId) + '</span></td>' +
+      '<td><span class="model-tag">' + escHtml(modelName) + '</span></td>' +
+      '<td><div class="usage-bar">' + barSegments + '</div></td>' +
+      '<td>' + total.toLocaleString() + '</td>' +
+      '<td>' + (saved > 0.0001
+        ? '<span class="saved-text">-$' + saved.toFixed(3) + ' (' + savedPct + '%)</span>'
+        : '\u2014') + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+function renderLegend(sessions) {
+  // Collect all unique providers across sessions
+  var providers = {};
+  sessions.forEach(function(s) {
+    (s.usage || []).forEach(function(u) {
+      if (!providers[u.provider]) providers[u.provider] = true;
+    });
+  });
+
+  var legendEl = document.getElementById('usage-legend');
+  legendEl.innerHTML = Object.keys(providers).map(function(p) {
+    var color = getProviderColor(p);
+    var label = p === 'anthropic' ? 'Claude' : p.toUpperCase();
+    return '<div class="legend-item">' +
+      '<div class="legend-dot" style="background:' + color + '"></div>' +
+      label +
+    '</div>';
+  }).join('');
+}
+
+// ═══════════════════════════════════════════
+// Toast
+// ═══════════════════════════════════════════
+
+function showToast(message, type) {
+  type = type || 'success';
+  var el = document.getElementById('toast');
+  el.textContent = message;
+  el.className = 'toast ' + type + ' show';
+  clearTimeout(el._timer);
+  el._timer = setTimeout(function() {
+    el.classList.remove('show');
+  }, 2000);
+}
+
+// ═══════════════════════════════════════════
+// Start
+// ═══════════════════════════════════════════
+
+init();
+
+// Auto-refresh usage tab every 5 seconds
+setInterval(function() {
+  if (document.getElementById('tab-usage').classList.contains('active')) {
+    loadUsage();
+  }
+}, 5000);
+</script>
+</body>
+</html>
