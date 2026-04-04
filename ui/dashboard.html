@@ -88,6 +88,8 @@ body {
   margin-bottom: 24px;
 }
 .tab {
+  flex: 1;
+  text-align: center;
   padding: 10px 20px;
   font-size: 14px;
   font-weight: 500;
@@ -719,14 +721,7 @@ tr:hover td {
   color: var(--destructive);
 }
 
-/* ═══ Full-width for CoT tab ═══ */
-#tab-cot.active {
-  margin-left: calc(-50vw + 50%);
-  margin-right: calc(-50vw + 50%);
-  padding-left: 20px;
-  padding-right: 20px;
-  max-width: 100vw;
-}
+/* CoT tab: same width as other tabs (no breakout) */
 
 /* ═══ CoT Viewer — Three Column ═══ */
 .cot-layout {
@@ -898,6 +893,24 @@ tr:hover td {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.cot-viewer-back {
+  padding: 3px 10px;
+  border-radius: var(--radius-input);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.cot-viewer-back:hover {
+  background: var(--bg);
+  color: var(--text-primary);
+  border-color: var(--border-hover);
+}
 .cot-viewer-close {
   width: 24px;
   height: 24px;
@@ -1040,13 +1053,11 @@ tr:hover td {
       <!-- Right: CUI iframe (hidden until session selected) -->
       <div class="cot-panel cot-panel-viewer">
         <div class="cot-viewer-header">
+          <button class="cot-viewer-back" onclick="cotCloseViewer()" title="返回">&larr; 返回</button>
           <div class="cot-viewer-title" id="cot-viewer-title">Chain of Thought</div>
           <button class="cot-viewer-close" onclick="cotCloseViewer()" title="关闭">&times;</button>
         </div>
-        <div class="cot-iframe-wrap" id="cot-viewer">
-            <div>选择一个会话查看</div>
-          </div>
-        </div>
+        <div class="cot-iframe-wrap" id="cot-viewer"></div>
       </div>
     </div>
   </div>
@@ -1261,7 +1272,7 @@ function renderSorted() {
       ' onclick="openEdit(' + i + ', event)"' +
       ' style="cursor:pointer">' +
       '<div class="model-grip">\u2807</div>' +
-      '<div class="model-rank">' + (i + 1) + '</div>' +
+      '<div class="model-rank" style="background:' + (level.color || '#c96442') + '20;color:' + (level.color || '#c96442') + '">' + (i + 1) + '</div>' +
       '<div class="model-body">' +
         '<div>' +
           '<div class="model-name">' + escHtml((level.name || '?').toUpperCase()) + '</div>' +

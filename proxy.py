@@ -690,11 +690,20 @@ class Handler(BaseHTTPRequestHandler):
     # ---- CoT API endpoints ----
 
     def _handle_cot_projects(self):
-        """List all project directories under ~/.claude/projects/ as a tree."""
+        """List all project directories under ~/.claude/projects/ as a tree.
+        Only count sessions registered in the CR sessions table."""
         projects_dir = Path.home() / ".claude" / "projects"
         if not projects_dir.exists():
             self._json([])
             return
+
+        # Get registered session IDs
+        conn = db_connect()
+        try:
+            rows = conn.execute("SELECT session_id FROM sessions").fetchall()
+            registered = {r["session_id"] for r in rows}
+        finally:
+            conn.close()
 
         result = []
         for d in sorted(projects_dir.iterdir()):
@@ -708,8 +717,15 @@ class Handler(BaseHTTPRequestHandler):
                 # /Users/username/rest -> ~/rest
                 readable = "~/" + "/".join(parts[3:]) if len(parts) > 3 else "~"
 
-            # Count jsonl files (sessions)
-            session_count = len([f for f in d.iterdir() if f.suffix == '.jsonl' and not f.name.startswith('agent-')])
+            # Count only registered sessions
+            session_count = len([
+                f for f in d.iterdir()
+                if f.suffix == '.jsonl' and not f.name.startswith('agent-')
+                and f.stem in registered
+            ])
+
+            if session_count == 0:
+                continue
 
             result.append({
                 "dir_name": name,
@@ -722,6 +738,14 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_cot_sessions(self, params):
         q = params.get("q", [""])[0].strip()
         project = params.get("project", [""])[0].strip()
+
+        # Get registered session IDs (only show CR-launched sessions)
+        conn = db_connect()
+        try:
+            rows = conn.execute("SELECT session_id FROM sessions").fetchall()
+            registered = {r["session_id"] for r in rows}
+        finally:
+            conn.close()
 
         # If project is specified, scan that directory directly for jsonl files
         if project:
@@ -736,6 +760,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not f.suffix == '.jsonl' or f.name.startswith('agent-'):
                     continue
                 session_id = f.stem
+
+                # Only show sessions registered through CR
+                if session_id not in registered:
+                    continue
+
                 file_size = f.stat().st_size
 
                 # Try to get metadata from index first
