@@ -997,7 +997,10 @@ class Handler(BaseHTTPRequestHandler):
             # Strip auth, inject provider key, rewrite model
             headers = {k: v for k, v in self.headers.items()
                        if k.lower() not in ("host", "content-length", "x-api-key", "authorization")}
+            # GLM uses x-api-key (same as Anthropic format)
             headers["x-api-key"] = provider_cfg["key"]
+            # Also set authorization for providers that need Bearer token
+            headers["authorization"] = "Bearer " + provider_cfg["key"]
             req_body["model"] = level_info["model"]
         else:
             # Anthropic: passthrough all headers (OAuth compatible), fix signatures
