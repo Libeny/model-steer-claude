@@ -94,16 +94,23 @@ with open(settings_path, 'w') as f:
 # Step 3: --skills
 # ---------------------------------------------------------------------------
 install_skills() {
-    info "Installing: skills"
+    info "Installing: skill + commands"
 
-    for skill in smoke redbull think-level; do
-        skill_dir="$CLAUDE_DIR/skills/$skill"
-        mkdir -p "$skill_dir"
-        cp "$INSTALL_DIR/skills/$skill/SKILL.md" "$skill_dir/SKILL.md"
-        info "Installed skill: $skill"
+    # Install main skill
+    skill_dir="$CLAUDE_DIR/skills/model-steer"
+    mkdir -p "$skill_dir"
+    cp "$INSTALL_DIR/skills/model-steer/SKILL.md" "$skill_dir/SKILL.md"
+    info "Installed skill: model-steer"
+
+    # Install slash commands
+    cmd_dir="$CLAUDE_DIR/commands"
+    mkdir -p "$cmd_dir"
+    for cmd in smoke redbull think-level; do
+        cp "$INSTALL_DIR/commands/$cmd.md" "$cmd_dir/$cmd.md"
+        info "Installed command: /$cmd"
     done
 
-    ok "Skills installed"
+    ok "Skill + commands installed"
 }
 
 # ---------------------------------------------------------------------------
@@ -154,7 +161,8 @@ do_uninstall() {
     echo ""
     echo "This will remove:"
     echo "  - msc hooks from $SETTINGS"
-    echo "  - skills: ~/.claude/skills/{smoke,redbull,think-level}"
+    echo "  - skill: ~/.claude/skills/model-steer"
+    echo "  - commands: ~/.claude/commands/{smoke,redbull,think-level}.md"
     echo "  - cr() function from $ZSHRC"
     echo "  - config dir: $MSC_DIR"
     echo ""
@@ -191,11 +199,12 @@ with open(settings_path, 'w') as f:
         ok "Hooks removed"
     fi
 
-    # Remove skills
-    for skill in smoke redbull think-level; do
-        rm -rf "$CLAUDE_DIR/skills/$skill"
+    # Remove skill + commands
+    rm -rf "$CLAUDE_DIR/skills/model-steer"
+    for cmd in smoke redbull think-level; do
+        rm -f "$CLAUDE_DIR/commands/$cmd.md"
     done
-    ok "Skills removed"
+    ok "Skill + commands removed"
 
     # Remove cr() from .zshrc
     if [ -f "$ZSHRC" ] && grep -q '# msc:' "$ZSHRC"; then
