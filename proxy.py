@@ -2,11 +2,15 @@
 """msc proxy: config-driven multi-level Claude routing with SQLite persistence."""
 import json
 import os
+import re
 import signal
 import sqlite3
+import subprocess
 import sys
 import tempfile
+import threading
 import time
+from functools import lru_cache
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -21,6 +25,7 @@ CONFIG_PATH = MSC_DIR / "config.json"
 DB_PATH = MSC_DIR / "msc.db"
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "default-config.json"
 DASHBOARD_PATH = Path(__file__).resolve().parent / "ui" / "dashboard.html"
+CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 
 # ---------------------------------------------------------------------------
 # Signature patching
@@ -195,6 +200,17 @@ def init_db():
             FOREIGN KEY (session_id) REFERENCES sessions(session_id)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS session_index (
+            session_id TEXT PRIMARY KEY,
+            project_path TEXT,
+            first_query TEXT,
+            last_timestamp TEXT,
+            file_path TEXT,
+            file_size INTEGER DEFAULT 0,
+            indexed_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -203,6 +219,302 @@ def db_connect():
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     return conn
+
+
+# ---------------------------------------------------------------------------
+# Session Indexer (CoT)
+# ---------------------------------------------------------------------------
+def _dir_to_project_path(dirname):
+    """Convert directory name like '-Users-limuyu-work-muyu' to '~/work/muyu'."""
+    # Remove leading dash, replace dashes with /
+    path = dirname.lstrip("-").replace("-", "/")
+    # Replace /Users/<user>/ with ~/
+    home = str(Path.home())
+    home_prefix = home.lstrip("/")  # e.g. Users/limuyu
+    if path.startswith(home_prefix):
+        path = "~" + path[len(home_prefix):]
+    elif path.startswith("/"):
+        pass
+    else:
+        path = "/" + path
+    return path
+
+
+def _find_session_jsonl(session_id):
+    """Find jsonl file for session_id under ~/.claude/projects/."""
+    if not CLAUDE_PROJECTS_DIR.exists():
+        return None
+    for proj_dir in CLAUDE_PROJECTS_DIR.iterdir():
+        if not proj_dir.is_dir():
+            continue
+        candidate = proj_dir / (session_id + ".jsonl")
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _extract_first_query(filepath):
+    """Read file to find first user message and extract query text."""
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    if obj.get("type") == "user":
+                        msg = obj.get("message", {})
+                        content = msg.get("content", "")
+                        if isinstance(content, str):
+                            return content[:500]
+                        elif isinstance(content, list):
+                            for block in content:
+                                if isinstance(block, dict) and block.get("type") == "text":
+                                    return block.get("text", "")[:500]
+                                elif isinstance(block, str):
+                                    return block[:500]
+                        return str(content)[:500]
+                except (json.JSONDecodeError, KeyError):
+                    continue
+    except Exception:
+        pass
+    return ""
+
+
+def _extract_last_timestamp(filepath):
+    """Read last 16KB of file to find last timestamp."""
+    try:
+        size = os.path.getsize(filepath)
+        read_size = min(size, 16384)
+        with open(filepath, "rb") as f:
+            f.seek(max(0, size - read_size))
+            data = f.read().decode("utf-8", errors="replace")
+        # Search from end for timestamp
+        for line in reversed(data.strip().split("\n")):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                ts = obj.get("timestamp")
+                if ts:
+                    return ts
+            except (json.JSONDecodeError, KeyError):
+                continue
+        # Fallback: try tac approach
+        try:
+            result = subprocess.run(
+                ["grep", "-m1", '"timestamp"', filepath],
+                capture_output=True, text=True, timeout=5
+            )
+            if result.stdout:
+                # Extract timestamp value
+                m = re.search(r'"timestamp"\s*:\s*"([^"]+)"', result.stdout)
+                if m:
+                    return m.group(1)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return ""
+
+
+def _index_session(session_id):
+    """Index a single session: find jsonl, extract metadata, store in DB."""
+    filepath = _find_session_jsonl(session_id)
+    if not filepath:
+        return
+
+    first_query = _extract_first_query(str(filepath))
+    last_timestamp = _extract_last_timestamp(str(filepath))
+    file_size = os.path.getsize(str(filepath))
+
+    # Derive project_path from parent directory name
+    project_path = _dir_to_project_path(filepath.parent.name)
+
+    conn = db_connect()
+    try:
+        conn.execute(
+            """INSERT INTO session_index (session_id, project_path, first_query, last_timestamp, file_path, file_size, indexed_at)
+               VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+               ON CONFLICT(session_id) DO UPDATE SET
+                 project_path = excluded.project_path,
+                 first_query = excluded.first_query,
+                 last_timestamp = excluded.last_timestamp,
+                 file_path = excluded.file_path,
+                 file_size = excluded.file_size,
+                 indexed_at = datetime('now')""",
+            (session_id, project_path, first_query, last_timestamp, str(filepath), file_size),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _index_all_sessions():
+    """Index all sessions registered in the sessions table."""
+    conn = db_connect()
+    try:
+        rows = conn.execute("SELECT session_id FROM sessions").fetchall()
+    finally:
+        conn.close()
+
+    for row in rows:
+        try:
+            _index_session(row["session_id"])
+        except Exception as e:
+            print(f"[msc] CoT index error for {row['session_id'][:8]}…: {e}", flush=True)
+
+    print(f"[msc] CoT indexed {len(rows)} session(s)", flush=True)
+
+
+def _periodic_index():
+    """Periodically check for changed jsonl files and re-index matching sessions."""
+    while True:
+        time.sleep(60)
+        try:
+            # Find recently modified jsonl files
+            result = subprocess.run(
+                ["find", str(CLAUDE_PROJECTS_DIR), "-name", "*.jsonl", "-mmin", "-1.5"],
+                capture_output=True, text=True, timeout=10
+            )
+            if not result.stdout.strip():
+                continue
+
+            changed_files = result.stdout.strip().split("\n")
+            # Extract session IDs from filenames
+            changed_sids = set()
+            for fp in changed_files:
+                fname = os.path.basename(fp)
+                if fname.endswith(".jsonl"):
+                    sid = fname[:-6]  # remove .jsonl
+                    changed_sids.add(sid)
+
+            if not changed_sids:
+                continue
+
+            # Only index sessions that exist in the sessions table
+            conn = db_connect()
+            try:
+                rows = conn.execute("SELECT session_id FROM sessions").fetchall()
+                registered = {r["session_id"] for r in rows}
+            finally:
+                conn.close()
+
+            to_update = changed_sids & registered
+            for sid in to_update:
+                try:
+                    _index_session(sid)
+                except Exception as e:
+                    print(f"[msc] CoT re-index error for {sid[:8]}…: {e}", flush=True)
+
+            if to_update:
+                print(f"[msc] CoT re-indexed {len(to_update)} session(s)", flush=True)
+        except Exception as e:
+            print(f"[msc] CoT periodic index error: {e}", flush=True)
+
+
+def start_cot_indexer():
+    """Start background indexer thread."""
+    def _run():
+        try:
+            _index_all_sessions()
+        except Exception as e:
+            print(f"[msc] CoT startup index error: {e}", flush=True)
+        _periodic_index()
+
+    t = threading.Thread(target=_run, daemon=True, name="cot-indexer")
+    t.start()
+
+
+# ---------------------------------------------------------------------------
+# CoT file reading utilities
+# ---------------------------------------------------------------------------
+def read_jsonl_tail(filepath, limit=20):
+    """Read last N valid JSON lines without loading entire file."""
+    try:
+        size = os.path.getsize(filepath)
+        chunk_size = min(size, limit * 4096)
+        with open(filepath, "rb") as f:
+            f.seek(max(0, size - chunk_size))
+            data = f.read().decode("utf-8", errors="replace")
+        lines = data.strip().split("\n")
+        result = []
+        total_lines_in_file = _count_lines_cached(filepath, size)
+        for i, line in enumerate(reversed(lines)):
+            try:
+                obj = json.loads(line.strip())
+                obj["_line_number"] = total_lines_in_file - i
+                result.insert(0, obj)
+                if len(result) >= limit:
+                    break
+            except (json.JSONDecodeError, ValueError):
+                pass
+        return result
+    except Exception:
+        return []
+
+
+def read_jsonl_head(filepath, offset=0, limit=20):
+    """Read N valid JSON lines from start, skipping offset lines."""
+    result = []
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            line_num = 0
+            skipped = 0
+            for line in f:
+                line_num += 1
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except (json.JSONDecodeError, ValueError):
+                    continue
+                if skipped < offset:
+                    skipped += 1
+                    continue
+                obj["_line_number"] = line_num
+                result.append(obj)
+                if len(result) >= limit:
+                    break
+        return result
+    except Exception:
+        return []
+
+
+@lru_cache(maxsize=64)
+def _count_lines_cached(filepath, file_size):
+    """Count total lines in file (cached by path+size)."""
+    try:
+        result = subprocess.run(
+            ["wc", "-l", filepath],
+            capture_output=True, text=True, timeout=10
+        )
+        return int(result.stdout.strip().split()[0])
+    except Exception:
+        return 0
+
+
+def count_messages_in_file(filepath):
+    """Count message-type lines (user/assistant/system) in jsonl."""
+    count = 0
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    if obj.get("type") in ("user", "assistant", "system", "progress"):
+                        count += 1
+                except (json.JSONDecodeError, ValueError):
+                    pass
+    except Exception:
+        pass
+    return count
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +571,17 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/ui":
             self._handle_ui()
+
+        elif path == "/api/cot/sessions":
+            self._handle_cot_sessions(params)
+
+        elif path.startswith("/api/cot/session/") and path.endswith("/messages"):
+            cot_sid = path[len("/api/cot/session/"):-len("/messages")]
+            self._handle_cot_messages(cot_sid, params)
+
+        elif path.startswith("/api/cot/session/") and path.endswith("/info"):
+            cot_sid = path[len("/api/cot/session/"):-len("/info")]
+            self._handle_cot_info(cot_sid)
 
         else:
             self._json({"status": "ok"})
@@ -360,6 +683,117 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(content.encode())
         except FileNotFoundError:
             self._json({"error": "dashboard.html not found"}, status=404)
+
+    # ---- CoT API endpoints ----
+
+    def _handle_cot_sessions(self, params):
+        q = params.get("q", [""])[0].strip()
+        conn = db_connect()
+        try:
+            if q:
+                like = f"%{q}%"
+                rows = conn.execute(
+                    """SELECT session_id, project_path, first_query, last_timestamp, file_size
+                       FROM session_index
+                       WHERE session_id LIKE ? OR first_query LIKE ? OR project_path LIKE ?
+                       ORDER BY last_timestamp DESC LIMIT 100""",
+                    (like, like, like),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT session_id, project_path, first_query, last_timestamp, file_size
+                       FROM session_index
+                       ORDER BY last_timestamp DESC LIMIT 100""",
+                ).fetchall()
+            result = [
+                {
+                    "session_id": r["session_id"],
+                    "project_path": r["project_path"],
+                    "first_query": r["first_query"],
+                    "last_timestamp": r["last_timestamp"],
+                    "file_size": r["file_size"],
+                }
+                for r in rows
+            ]
+            self._json(result)
+        finally:
+            conn.close()
+
+    def _handle_cot_messages(self, session_id, params):
+        conn = db_connect()
+        try:
+            row = conn.execute(
+                "SELECT file_path FROM session_index WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+
+        if not row or not row["file_path"]:
+            self._json({"error": "session not found"}, status=404)
+            return
+
+        filepath = row["file_path"]
+        if not os.path.exists(filepath):
+            self._json({"error": "jsonl file not found"}, status=404)
+            return
+
+        limit = int(params.get("limit", ["20"])[0])
+        offset = int(params.get("offset", ["0"])[0])
+        direction = params.get("direction", ["tail"])[0]
+
+        if direction == "tail":
+            messages = read_jsonl_tail(filepath, limit=limit)
+        else:
+            messages = read_jsonl_head(filepath, offset=offset, limit=limit)
+
+        # Clean up messages for response: extract relevant fields
+        result = []
+        for msg in messages:
+            entry = {
+                "type": msg.get("type", ""),
+                "timestamp": msg.get("timestamp", ""),
+                "line_number": msg.pop("_line_number", 0),
+            }
+            message = msg.get("message", {})
+            if isinstance(message, dict):
+                entry["content"] = message.get("content", "")
+                entry["role"] = message.get("role", "")
+                entry["model"] = message.get("model", "")
+            else:
+                entry["content"] = ""
+                entry["role"] = ""
+                entry["model"] = ""
+            result.append(entry)
+
+        self._json(result)
+
+    def _handle_cot_info(self, session_id):
+        conn = db_connect()
+        try:
+            row = conn.execute(
+                "SELECT session_id, project_path, first_query, last_timestamp, file_path, file_size FROM session_index WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+
+        if not row:
+            self._json({"error": "session not found"}, status=404)
+            return
+
+        msg_count = 0
+        if row["file_path"] and os.path.exists(row["file_path"]):
+            msg_count = count_messages_in_file(row["file_path"])
+
+        self._json({
+            "session_id": row["session_id"],
+            "project_path": row["project_path"],
+            "first_query": row["first_query"],
+            "last_timestamp": row["last_timestamp"],
+            "file_size": row["file_size"],
+            "message_count": msg_count,
+        })
 
     # ---- POST endpoints ----
 
@@ -593,6 +1027,7 @@ def main():
 
     init_db()
     _rebuild_clients()
+    start_cot_indexer()
 
     port = cfg.get("port", 3457)
     server = HTTPServer(("127.0.0.1", port), Handler)
