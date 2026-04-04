@@ -390,7 +390,7 @@ body {
   background: var(--surface);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-elevated);
-  width: 500px;
+  width: 580px;
   max-width: 92vw;
   animation: modalIn 200ms ease;
 }
@@ -915,10 +915,7 @@ tr:hover td {
     <div class="section">
       <div class="section-header">
         <div class="section-title">模型等级</div>
-        <div style="display:flex;gap:6px;align-items:center">
-          <button class="btn btn-ghost btn-small" id="toggle-keys-btn" onclick="toggleKeys()" title="显示/隐藏密钥" style="font-size:14px;padding:4px 8px">&#128065;</button>
-          <button class="btn btn-primary btn-small" onclick="openAddModal()">+ 新增模型</button>
-        </div>
+        <button class="btn btn-primary btn-small" onclick="openAddModal()">+ 新增模型</button>
       </div>
       <div class="model-list" id="sorted-list"
         ondragover="handleZoneDragOver(event,'sorted')"
@@ -1028,10 +1025,7 @@ tr:hover td {
     </div>
     <div class="modal-body">
       <!-- Read-only rank (edit mode only) -->
-      <div class="field" id="modal-rank-field" style="display:none">
-        <label>等级</label>
-        <input id="modal-rank" class="readonly-rank" readonly>
-      </div>
+      <!-- rank field removed -->
 
       <!-- Type selector -->
       <div class="type-selector" id="modal-type-selector">
@@ -1101,7 +1095,12 @@ tr:hover td {
         <div class="field-row">
           <div class="field">
             <label>API Key</label>
-            <input id="add-custom-key" type="password" placeholder="sk-...">
+            <div style="position:relative">
+              <input id="add-custom-key" type="password" placeholder="sk-..." style="padding-right:36px">
+              <button type="button" onclick="toggleKeyVisibility()" id="key-eye-btn"
+                style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:14px;color:var(--text-tertiary);padding:2px"
+                title="显示/隐藏密钥">&#128065;</button>
+            </div>
           </div>
           <div class="field">
             <label>代理（可选）</label>
@@ -1160,7 +1159,6 @@ const CNY_RATE = 7.25; // approximate USD to CNY
 let config = null;
 let configSnapshot = null;
 let currentAddType = 'claude';
-let keysVisible = false;
 let dragSourceEl = null;
 let modalMode = 'add'; // 'add' or 'edit'
 let editIdx = -1;
@@ -1233,11 +1231,7 @@ function renderSorted() {
       '<div class="model-body">' +
         '<div>' +
           '<div class="model-name">' + escHtml((level.name || '?').toUpperCase()) + '</div>' +
-          '<div class="model-meta">' + escHtml(level.model) +
-            (keysVisible && config.providers && config.providers[level.provider] && config.providers[level.provider]._full_key
-              ? ' \u00b7 <span style="font-family:var(--font-mono);color:var(--text-tertiary)">' + escHtml(config.providers[level.provider]._full_key) + '</span>'
-              : '') +
-          '</div>' +
+          '<div class="model-meta">' + escHtml(level.model) + '</div>' +
         '</div>' +
         colorDot +
         '<span class="provider-tag">' + provLabel + '</span>' +
@@ -1480,7 +1474,6 @@ function openAddModal() {
   updateTypeSelection();
 
   document.getElementById('modal-title').textContent = '新增模型';
-  document.getElementById('modal-rank-field').style.display = 'none';
   document.getElementById('add-to-levels-row').style.display = '';
   document.getElementById('modal-submit-btn').textContent = '添加';
   document.getElementById('modal-submit-btn').onclick = submitModal;
@@ -1511,10 +1504,8 @@ function openEdit(idx, e) {
   options[1].classList.toggle('active', isCustom);
   updateTypeSelection();
 
-  // Show rank, hide checkbox
+  // Hide checkbox in edit mode
   document.getElementById('modal-title').textContent = '编辑模型';
-  document.getElementById('modal-rank-field').style.display = '';
-  document.getElementById('modal-rank').value = (idx + 1);
   document.getElementById('add-to-levels-row').style.display = 'none';
   document.getElementById('modal-submit-btn').textContent = '保存';
   document.getElementById('modal-submit-btn').onclick = submitModal;
@@ -1543,8 +1534,15 @@ function openEdit(idx, e) {
     if (config.providers && config.providers[item.provider]) {
       var prov = config.providers[item.provider];
       document.getElementById('add-custom-url').value = prov.url || '';
-      document.getElementById('add-custom-key').value = prov.key || '';
       document.getElementById('add-custom-proxy').value = prov.proxy || '';
+      // Fetch full key for editing
+      fetch('/config?show_keys=1').then(function(r){return r.json()}).then(function(full){
+        if(full.providers && full.providers[item.provider]){
+          document.getElementById('add-custom-key').value = full.providers[item.provider].key || '';
+        }
+      }).catch(function(){
+        document.getElementById('add-custom-key').value = prov.key || '';
+      });
     } else {
       document.getElementById('add-custom-url').value = '';
       document.getElementById('add-custom-key').value = '';
@@ -1770,30 +1768,16 @@ function deletePool(idx) {
 // Undo / Save
 // ═══════════════════════════════════════════
 
-async function toggleKeys() {
-  keysVisible = !keysVisible;
-  var btn = document.getElementById('toggle-keys-btn');
-  if (keysVisible) {
-    // Fetch full keys from API
-    try {
-      var resp = await fetch('/config?show_keys=1');
-      var fullConfig = await resp.json();
-      // Update providers with full keys
-      if (fullConfig.providers) {
-        for (var pn in fullConfig.providers) {
-          if (config.providers && config.providers[pn]) {
-            config.providers[pn]._full_key = fullConfig.providers[pn].key;
-          }
-        }
-      }
-    } catch(e) {}
+function toggleKeyVisibility() {
+  var input = document.getElementById('add-custom-key');
+  var btn = document.getElementById('key-eye-btn');
+  if (input.type === 'password') {
+    input.type = 'text';
     btn.style.color = 'var(--accent)';
-    btn.title = '隐藏密钥';
   } else {
-    btn.style.color = '';
-    btn.title = '显示密钥';
+    input.type = 'password';
+    btn.style.color = 'var(--text-tertiary)';
   }
-  renderAll();
 }
 
 function undoChanges() {
