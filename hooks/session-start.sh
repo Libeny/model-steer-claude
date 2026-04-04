@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # Hook: session-start — register session with msc proxy and inject CR_SESSION
-set -euo pipefail
+# NO set -e: must not exit early, CLAUDE_ENV_FILE injection is critical
 
 PROXY="http://127.0.0.1:3457"
 
+# Read all stdin first (Claude Code pipes JSON)
+STDIN_DATA=$(cat 2>/dev/null || true)
+
 # Extract session_id from stdin JSON
-SESSION_ID=$(python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || true)
+SESSION_ID=""
+if [ -n "$STDIN_DATA" ]; then
+  SESSION_ID=$(echo "$STDIN_DATA" | python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || true)
+fi
 
 if [[ -z "$SESSION_ID" ]]; then
   exit 0
