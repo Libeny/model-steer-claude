@@ -61,7 +61,7 @@ a, button, .tab, .chip, .type-option, .color-dot, .cot-project-item, .cot-sessio
 
 /* ═══ Layout ═══ */
 .app {
-  max-width: 880px;
+  max-width: 1100px;
   margin: 0 auto;
   padding: 36px 20px 80px;
 }
@@ -641,12 +641,34 @@ tr:hover td {
 .model-tag {
   display: inline-block;
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: 4px;
   font-size: 11px;
-  font-weight: 500;
-  background: var(--bg);
-  color: var(--text-secondary);
+  font-weight: 600;
+  background: var(--accent-light);
+  color: var(--accent);
+}
+.session-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.field-input {
+  width: 100%;
+  padding: 10px 12px;
   border: 1px solid var(--border);
+  border-radius: var(--radius-input);
+  font-size: 14px;
+  font-family: var(--font-sans);
+  background: var(--surface);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color var(--transition);
+}
+.field-input:focus {
+  border-color: var(--accent);
+}
+.field-input::placeholder {
+  color: var(--text-tertiary);
 }
 .usage-bar {
   height: 6px;
@@ -914,7 +936,7 @@ tr:hover td {
   <!-- Tabs -->
   <div class="tabs">
     <div class="tab active" onclick="switchTab(0)">模型配置</div>
-    <div class="tab" onclick="switchTab(1)">用量统计</div>
+    <div class="tab" onclick="switchTab(1)">会话管理</div>
     <div class="tab" onclick="switchTab(2)">CoT</div>
   </div>
 
@@ -949,7 +971,7 @@ tr:hover td {
     </div>
   </div>
 
-  <!-- ═══ Tab 2: 用量统计 ═══ -->
+  <!-- ═══ Tab 2: 会话管理 ═══ -->
   <div class="tab-content" id="tab-usage">
     <div class="stat-row">
       <div class="card stat-card">
@@ -966,26 +988,35 @@ tr:hover td {
       </div>
     </div>
 
-    <div class="card" style="padding: 0 0 4px;">
-      <div class="table-wrapper">
-        <table>
-          <thead>
-            <tr>
-              <th>Session</th>
-              <th>当前模型</th>
-              <th>模型分布</th>
-              <th>Token</th>
-              <th>节省</th>
-            </tr>
-          </thead>
-          <tbody id="session-tbody">
-            <tr><td colspan="5" class="empty-state">加载中...</td></tr>
-          </tbody>
-        </table>
+    <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
+      <div style="flex:1;position:relative">
+        <svg style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-tertiary)" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input class="field-input" id="session-search" placeholder="搜索 session / 路径 / 内容..." oninput="filterSessions()" style="padding-left:34px">
       </div>
+      <select class="field-input" id="session-sort" onchange="sortSessions()" style="width:160px">
+        <option value="recent">最近活跃</option>
+        <option value="tokens">Token 消耗</option>
+        <option value="path">项目路径</option>
+      </select>
     </div>
 
-    <div class="legend" id="usage-legend"></div>
+    <div class="card" style="padding:0">
+      <table class="session-table">
+        <thead>
+          <tr>
+            <th>Session ID</th>
+            <th>首条消息</th>
+            <th>项目路径</th>
+            <th>当前模型</th>
+            <th>Token</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="session-tbody">
+          <tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-tertiary)">加载中...</td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 
   <!-- ═══ Tab 3: CoT ═══ -->
@@ -1146,6 +1177,13 @@ tr:hover td {
   </div>
 </div>
 
+<div class="overlay" id="switch-overlay" onclick="if(event.target===this)closeSwitchModal()">
+  <div class="modal" style="width:360px">
+    <div class="modal-header"><h3>切换模型</h3><button class="btn-icon" onclick="closeSwitchModal()">&times;</button></div>
+    <div id="switch-content"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1193,7 +1231,7 @@ function switchTab(index) {
     tabs[i].classList.toggle('active', i === index);
     contents[i].classList.toggle('active', i === index);
   }
-  if (index === 1) loadUsage();
+  if (index === 1) loadSessionManagement();
   if (index === 2) loadCotProjects();
 }
 
@@ -1830,40 +1868,122 @@ async function saveConfig() {
 }
 
 // ═══════════════════════════════════════════
-// Usage Tab
+// Session Management Tab
 // ═══════════════════════════════════════════
 
-function getProviderColor(providerName) {
-  // Look up color from config levels by provider name
-  if (config && config.levels) {
-    var sorted = getSortedLevels();
-    for (var i = 0; i < sorted.length; i++) {
-      if (sorted[i][1].provider === providerName && sorted[i][1].color) {
-        return sorted[i][1].color;
-      }
-    }
+var allSessions = [];
+var filteredSessions = [];
+
+async function loadSessionManagement() {
+  // Fetch sessions + CoT index for first_query and path
+  try {
+    var [sessResp, cotResp] = await Promise.all([
+      fetch('/sessions'),
+      fetch('/api/cot/sessions')
+    ]);
+    var sessions = await sessResp.json();
+    var cotData = await cotResp.json();
+
+    // Merge CoT data into sessions
+    var cotMap = {};
+    cotData.forEach(function(c) { cotMap[c.session_id] = c; });
+
+    allSessions = sessions.map(function(s) {
+      var cot = cotMap[s.session_id] || {};
+      return {
+        session_id: s.session_id,
+        level: s.level,
+        name: s.name || 'glm',
+        label: s.label || 'GLM',
+        first_query: cot.first_query || '',
+        project_path: cot.project_path || '',
+        total_tokens: (s.usage || []).reduce(function(sum, u) { return sum + (u.input_tokens||0) + (u.output_tokens||0); }, 0),
+        usage: s.usage || [],
+        updated_at: s.updated_at || s.created_at || ''
+      };
+    });
+
+    filteredSessions = allSessions.slice();
+    sortSessions();
+    renderStats(allSessions);
+  } catch(e) {
+    document.getElementById('session-tbody').innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-tertiary)">无法加载数据</td></tr>';
   }
-  // Check pool too
-  if (config && config._pool) {
-    for (var i = 0; i < config._pool.length; i++) {
-      if (config._pool[i].provider === providerName && config._pool[i].color) {
-        return config._pool[i].color;
-      }
-    }
-  }
-  return '#9b9590'; // default gray
 }
 
-async function loadUsage() {
+function filterSessions() {
+  var q = (document.getElementById('session-search').value || '').toLowerCase();
+  if (!q) {
+    filteredSessions = allSessions.slice();
+  } else {
+    filteredSessions = allSessions.filter(function(s) {
+      return s.session_id.toLowerCase().includes(q) ||
+        s.first_query.toLowerCase().includes(q) ||
+        s.project_path.toLowerCase().includes(q);
+    });
+  }
+  renderSessionTable();
+}
+
+function sortSessions() {
+  var sort = document.getElementById('session-sort').value;
+  filteredSessions.sort(function(a, b) {
+    if (sort === 'tokens') return b.total_tokens - a.total_tokens;
+    if (sort === 'path') return (a.project_path || '').localeCompare(b.project_path || '');
+    return (b.updated_at || '').localeCompare(a.updated_at || ''); // recent
+  });
+  renderSessionTable();
+}
+
+function renderSessionTable() {
+  var tbody = document.getElementById('session-tbody');
+  if (!filteredSessions.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-tertiary)">暂无会话</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filteredSessions.map(function(s) {
+    var query = s.first_query || '(无消息)';
+    if (query.length > 40) query = query.substring(0, 40) + '...';
+    var path = s.project_path || '-';
+    return '<tr>' +
+      '<td><span style="font-family:var(--font-mono);font-size:12px;word-break:break-all">' + escHtml(s.session_id) + '</span></td>' +
+      '<td>' + escHtml(query) + '</td>' +
+      '<td style="color:var(--text-secondary);font-size:12px">' + escHtml(path) + '</td>' +
+      '<td><span class="model-tag">' + escHtml(s.label) + '</span></td>' +
+      '<td style="font-family:var(--font-mono)">' + s.total_tokens.toLocaleString() + '</td>' +
+      '<td><button class="btn btn-ghost btn-small" onclick="openSwitchModal(\'' + escHtml(s.session_id) + '\',' + s.level + ')">切换</button></td>' +
+    '</tr>';
+  }).join('');
+}
+
+function openSwitchModal(sessionId, currentLevel) {
+  var levels = config ? config.levels || {} : {};
+  var options = Object.entries(levels).map(function(e) {
+    var num = e[0], lv = e[1];
+    var isCurrent = parseInt(num) === currentLevel;
+    return '<button class="btn ' + (isCurrent ? 'btn-primary' : 'btn-ghost') + '" style="margin:4px" ' +
+      (isCurrent ? 'disabled' : 'onclick="switchSessionModel(\'' + sessionId + '\',' + num + ')"') + '>' +
+      'Level ' + num + ' (' + escHtml((lv.name||'?').toUpperCase()) + ')' +
+    '</button>';
+  }).join('');
+
+  var content = '<div style="text-align:center;padding:16px"><div style="margin-bottom:12px;color:var(--text-secondary);font-size:13px">选择模型等级</div>' + options + '</div>';
+  document.getElementById('switch-content').innerHTML = content;
+  document.getElementById('switch-overlay').classList.add('show');
+}
+
+function closeSwitchModal() {
+  document.getElementById('switch-overlay').classList.remove('show');
+}
+
+async function switchSessionModel(sessionId, level) {
   try {
-    var resp = await fetch(API_BASE + '/sessions');
-    var sessions = await resp.json();
-    renderStats(sessions);
-    renderSessionTable(sessions);
-    renderLegend(sessions);
-  } catch (e) {
-    document.getElementById('session-tbody').innerHTML =
-      '<tr><td colspan="5" class="empty-state">无法加载数据</td></tr>';
+    await fetch('/think-level?session=' + encodeURIComponent(sessionId) + '&level=' + level);
+    closeSwitchModal();
+    showToast('已切换');
+    loadSessionManagement();
+  } catch(e) {
+    showToast('切换失败', 'error');
   }
 }
 
@@ -1896,80 +2016,6 @@ function renderStats(sessions) {
     saved > 0 ? '相比纯 Claude 模式 · 约 \u00a5' + cny : '相比纯 Claude 模式';
 }
 
-function renderSessionTable(sessions) {
-  var tbody = document.getElementById('session-tbody');
-
-  if (!sessions.length) {
-    tbody.innerHTML = '<tr><td colspan="5" class="empty-state">暂无会话</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = sessions.map(function(s) {
-    var byProvider = {};
-    var total = 0;
-
-    (s.usage || []).forEach(function(u) {
-      var t = (u.input_tokens || 0) + (u.output_tokens || 0);
-      byProvider[u.provider] = (byProvider[u.provider] || 0) + t;
-      total += t;
-    });
-
-    // Build bar segments for each provider with their configured color
-    var barSegments = '';
-    Object.keys(byProvider).forEach(function(p) {
-      var pct = total > 0 ? (byProvider[p] / total * 100) : 0;
-      var color = getProviderColor(p);
-      barSegments += '<div style="width:' + pct + '%;height:100%;background:' + color + '"></div>';
-    });
-
-    // Calculate savings
-    var fullCost = 0;
-    var mixedCost = 0;
-    (s.usage || []).forEach(function(u) {
-      var inp = u.input_tokens || 0;
-      var out = u.output_tokens || 0;
-      var p = PRICE[u.provider] || PRICE.anthropic;
-      mixedCost += (inp / 1e6) * p.input + (out / 1e6) * p.output;
-      fullCost += (inp / 1e6) * PRICE.anthropic.input + (out / 1e6) * PRICE.anthropic.output;
-    });
-    var saved = fullCost - mixedCost;
-    var savedPct = fullCost > 0 ? Math.round((saved / fullCost) * 100) : 0;
-
-    var modelName = (s.name || s.current_model || '?').toUpperCase();
-    var sessionId = (s.session_id || '').substring(0, 8);
-
-    return '<tr>' +
-      '<td><span class="session-id">' + escHtml(sessionId) + '</span></td>' +
-      '<td><span class="model-tag">' + escHtml(modelName) + '</span></td>' +
-      '<td><div class="usage-bar">' + barSegments + '</div></td>' +
-      '<td>' + total.toLocaleString() + '</td>' +
-      '<td>' + (saved > 0.0001
-        ? '<span class="saved-text">-$' + saved.toFixed(3) + ' (' + savedPct + '%)</span>'
-        : '\u2014') + '</td>' +
-    '</tr>';
-  }).join('');
-}
-
-function renderLegend(sessions) {
-  // Collect all unique providers across sessions
-  var providers = {};
-  sessions.forEach(function(s) {
-    (s.usage || []).forEach(function(u) {
-      if (!providers[u.provider]) providers[u.provider] = true;
-    });
-  });
-
-  var legendEl = document.getElementById('usage-legend');
-  legendEl.innerHTML = Object.keys(providers).map(function(p) {
-    var color = getProviderColor(p);
-    var label = p === 'anthropic' ? 'Claude' : p.toUpperCase();
-    return '<div class="legend-item">' +
-      '<div class="legend-dot" style="background:' + color + '"></div>' +
-      label +
-    '</div>';
-  }).join('');
-}
-
 // ═══════════════════════════════════════════
 // Toast
 // ═══════════════════════════════════════════
@@ -1991,10 +2037,10 @@ function showToast(message, type) {
 
 init();
 
-// Auto-refresh usage tab every 5 seconds
+// Auto-refresh session management tab every 5 seconds
 setInterval(function() {
   if (document.getElementById('tab-usage').classList.contains('active')) {
-    loadUsage();
+    loadSessionManagement();
   }
 }, 5000);
 
@@ -2135,7 +2181,7 @@ function cotSelectSession(sessionId, title) {
   document.getElementById('cot-list-view').style.display = 'none';
   document.getElementById('cot-viewer-view').style.display = 'block';
   document.getElementById('cot-viewer-title').textContent = title || sessionId.substring(0, 8);
-  document.getElementById('cot-iframe').src = CUI_BASE + '/c/' + encodeURIComponent(sessionId) + '?embed=1';
+  document.getElementById('cot-iframe').src = CUI_BASE + '/c/' + encodeURIComponent(sessionId) + '?embed&skip-auth';
 }
 
 // Back from viewer — return to two-column list view
