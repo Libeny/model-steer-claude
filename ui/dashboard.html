@@ -719,26 +719,54 @@ tr:hover td {
   color: var(--destructive);
 }
 
-/* ═══ CoT Viewer ═══ */
+/* ═══ Full-width for CoT tab ═══ */
+#tab-cot.active {
+  margin-left: calc(-50vw + 50%);
+  margin-right: calc(-50vw + 50%);
+  padding-left: 20px;
+  padding-right: 20px;
+  max-width: 100vw;
+}
+
+/* ═══ CoT Viewer — Three Column ═══ */
 .cot-layout {
   display: flex;
-  gap: 16px;
   height: calc(100vh - 180px);
   min-height: 500px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  background: var(--surface);
 }
-.cot-sidebar {
-  width: 30%;
-  min-width: 240px;
+.cot-panel {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  overflow: hidden;
+}
+.cot-panel-projects {
+  width: 20%;
+  min-width: 180px;
+  border-right: 1px solid var(--border);
+}
+.cot-panel-sessions {
+  width: 25%;
+  min-width: 200px;
+  border-right: 1px solid var(--border);
+}
+.cot-panel-viewer {
+  flex: 1;
+}
+.cot-panel-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 .cot-search {
   width: 100%;
-  padding: 9px 12px;
+  padding: 7px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-input);
-  font-size: 13px;
+  font-size: 12px;
   font-family: var(--font-sans);
   background: var(--surface);
   color: var(--text-primary);
@@ -751,27 +779,67 @@ tr:hover td {
 .cot-search::placeholder {
   color: var(--text-tertiary);
 }
-.cot-session-list {
+.cot-scroll {
   flex: 1;
   overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
 }
+/* Project items */
+.cot-project-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: all var(--transition);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border);
+}
+.cot-project-item:hover {
+  background: var(--bg);
+}
+.cot-project-item.active {
+  background: var(--accent-light);
+  color: var(--accent-dark);
+}
+.cot-project-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.cot-project-count {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--bg);
+  color: var(--text-tertiary);
+  border: 1px solid var(--border);
+}
+.cot-project-item.active .cot-project-count {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+/* Session items */
 .cot-session-item {
   padding: 10px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-input);
   cursor: pointer;
   transition: all var(--transition);
   background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 .cot-session-item:hover {
-  border-color: var(--border-hover);
-  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  background: var(--bg);
 }
 .cot-session-item.active {
-  border-color: var(--accent);
+  border-left: 3px solid var(--accent);
   background: var(--accent-light);
 }
 .cot-session-query {
@@ -791,172 +859,34 @@ tr:hover td {
   font-size: 11px;
   color: var(--text-tertiary);
 }
-.cot-session-path {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .cot-session-time {
   flex-shrink: 0;
 }
-.cot-main {
+.cot-session-size {
+  flex-shrink: 0;
+}
+/* Viewer iframe panel */
+.cot-iframe-wrap {
   flex: 1;
   display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--surface);
-  overflow: hidden;
+  align-items: center;
+  justify-content: center;
 }
-.cot-messages {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.cot-iframe-wrap iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
 }
-.cot-messages .empty-state {
-  margin: auto;
-}
-.cot-load-more {
+.cot-empty-viewer {
   text-align: center;
-  padding: 8px;
-}
-.cot-load-more button {
-  padding: 5px 16px;
-  border-radius: 14px;
-  font-size: 12px;
-  cursor: pointer;
-  border: 1px solid var(--border);
-  background: var(--bg);
-  color: var(--text-secondary);
-  font-family: var(--font-sans);
-  transition: all var(--transition);
-}
-.cot-load-more button:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.cot-msg {
-  padding: 10px 14px;
-  border-radius: var(--radius-input);
-  font-size: 13px;
-  line-height: 1.6;
-  word-break: break-word;
-  max-width: 100%;
-}
-.cot-msg.user {
-  background: #f0ede8;
-  border: 1px solid #e0dcd6;
-}
-.cot-msg.assistant {
-  background: var(--surface);
-  border: 1px solid var(--border);
-}
-.cot-msg.system, .cot-msg.progress {
-  background: #f5f3ef;
-  border: 1px solid var(--border);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.cot-msg-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 6px;
-}
-.cot-msg-role {
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.3px;
-}
-.cot-msg.user .cot-msg-role { color: var(--accent); }
-.cot-msg.assistant .cot-msg-role { color: #4a6fa5; }
-.cot-msg-model {
-  display: inline-block;
-  padding: 1px 7px;
-  border-radius: 10px;
-  font-size: 10px;
-  font-weight: 500;
-  background: var(--bg);
-  color: var(--text-secondary);
-  border: 1px solid var(--border);
-}
-.cot-msg-time {
-  font-size: 10px;
   color: var(--text-tertiary);
-  margin-left: auto;
+  font-size: 14px;
 }
-.cot-msg-text {
-  white-space: pre-wrap;
-}
-.cot-thinking {
-  margin-top: 6px;
-  border: 1px solid #e8e5df;
-  border-radius: 6px;
-  overflow: hidden;
-}
-.cot-thinking-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  background: #faf8f5;
-  cursor: pointer;
-  font-size: 12px;
-  color: var(--text-secondary);
-  user-select: none;
-  transition: background var(--transition);
-}
-.cot-thinking-toggle:hover {
-  background: #f0ede8;
-}
-.cot-thinking-arrow {
-  font-size: 10px;
-  transition: transform 200ms ease;
-}
-.cot-thinking-arrow.open {
-  transform: rotate(90deg);
-}
-.cot-thinking-preview {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-style: italic;
-}
-.cot-thinking-body {
-  display: none;
-  padding: 8px 10px;
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-  background: #fdfcfa;
-  color: var(--text-secondary);
-  max-height: 300px;
-  overflow-y: auto;
-  border-top: 1px solid #e8e5df;
-}
-.cot-thinking-body.show {
-  display: block;
-}
-.cot-tool-use {
-  margin-top: 4px;
-  padding: 6px 10px;
-  background: #f5f3ef;
-  border-radius: 6px;
-  font-family: var(--font-mono);
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.cot-tool-name {
+.cot-empty-viewer-title {
+  font-size: 16px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--text-secondary);
+  margin-bottom: 6px;
 }
 </style>
 </head>
@@ -1049,17 +979,30 @@ tr:hover td {
   <!-- ═══ Tab 3: CoT ═══ -->
   <div class="tab-content" id="tab-cot">
     <div class="cot-layout">
-      <div class="cot-sidebar">
-        <input class="cot-search" id="cot-search" placeholder="搜索 session / 路径 / 内容..." oninput="cotSearchDebounced()">
-        <div class="cot-session-list" id="cot-session-list">
+      <!-- Left: Project directory tree -->
+      <div class="cot-panel cot-panel-projects">
+        <div class="cot-panel-header">
+          <input class="cot-search" id="cot-project-search" placeholder="搜索项目..." oninput="cotProjectSearchDebounced()">
+        </div>
+        <div class="cot-scroll" id="cot-project-list">
           <div class="empty-state">加载中...</div>
         </div>
       </div>
-      <div class="cot-main">
-        <div class="cot-messages" id="cot-messages">
-          <div class="empty-state">
-            <div class="empty-state-title">Chain of Thought</div>
-            <div>选择一个会话查看对话记录</div>
+      <!-- Middle: Session list -->
+      <div class="cot-panel cot-panel-sessions">
+        <div class="cot-panel-header">
+          <input class="cot-search" id="cot-session-search" placeholder="搜索会话..." oninput="cotSessionSearchDebounced()">
+        </div>
+        <div class="cot-scroll" id="cot-session-list">
+          <div class="empty-state" style="padding:30px 12px">选择一个项目</div>
+        </div>
+      </div>
+      <!-- Right: CUI iframe -->
+      <div class="cot-panel cot-panel-viewer">
+        <div class="cot-iframe-wrap" id="cot-viewer">
+          <div class="cot-empty-viewer">
+            <div class="cot-empty-viewer-title">Chain of Thought</div>
+            <div>选择一个会话查看</div>
           </div>
         </div>
       </div>
@@ -1225,7 +1168,7 @@ function switchTab(index) {
     contents[i].classList.toggle('active', i === index);
   }
   if (index === 1) loadUsage();
-  if (index === 2) loadCotSessions();
+  if (index === 2) loadCotProjects();
 }
 
 // ═══════════════════════════════════════════
@@ -2008,59 +1951,178 @@ setInterval(function() {
 }, 5000);
 
 // ═══════════════════════════════════════════
-// CoT Viewer
+// CoT Viewer — Three Column
 // ═══════════════════════════════════════════
 
+var cotProjects = [];
+var cotFilteredProjects = [];
+var cotSelectedProject = null;
 var cotSessions = [];
-var cotSelectedId = null;
-var cotMessages = [];
-var cotLoading = false;
-var cotHasMore = true;
-var cotSearchTimer = null;
+var cotFilteredSessions = [];
+var cotSelectedSessionId = null;
+var cotCuiToken = null;
+var cotProjectSearchTimer = null;
+var cotSessionSearchTimer = null;
 
-function cotSearchDebounced() {
-  clearTimeout(cotSearchTimer);
-  cotSearchTimer = setTimeout(function() {
-    loadCotSessions();
-  }, 300);
+var CUI_BASE = 'http://localhost:4000';
+
+function cotProjectSearchDebounced() {
+  clearTimeout(cotProjectSearchTimer);
+  cotProjectSearchTimer = setTimeout(function() {
+    cotFilterProjects();
+  }, 200);
 }
 
-async function loadCotSessions() {
-  var q = (document.getElementById('cot-search').value || '').trim();
-  var url = API_BASE + '/api/cot/sessions';
-  if (q) url += '?q=' + encodeURIComponent(q);
+function cotSessionSearchDebounced() {
+  clearTimeout(cotSessionSearchTimer);
+  cotSessionSearchTimer = setTimeout(function() {
+    cotFilterSessions();
+  }, 200);
+}
+
+// Fetch CUI auth token
+async function cotFetchCuiToken() {
   try {
-    var resp = await fetch(url);
+    var resp = await fetch(CUI_BASE + '/api/status');
+    var data = await resp.json();
+    cotCuiToken = data.token || '';
+  } catch (e) {
+    cotCuiToken = null;
+  }
+}
+
+// 1. Load projects on tab switch
+async function loadCotProjects() {
+  // Fetch token in parallel
+  if (cotCuiToken === null) cotFetchCuiToken();
+
+  try {
+    var resp = await fetch(API_BASE + '/api/cot/projects');
+    cotProjects = await resp.json();
+    cotFilterProjects();
+  } catch (e) {
+    document.getElementById('cot-project-list').innerHTML =
+      '<div class="empty-state" style="padding:20px 12px">加载失败</div>';
+  }
+}
+
+function cotFilterProjects() {
+  var q = (document.getElementById('cot-project-search').value || '').trim().toLowerCase();
+  if (q) {
+    cotFilteredProjects = cotProjects.filter(function(p) {
+      return p.path.toLowerCase().indexOf(q) >= 0 || p.dir_name.toLowerCase().indexOf(q) >= 0;
+    });
+  } else {
+    cotFilteredProjects = cotProjects;
+  }
+  renderCotProjects();
+}
+
+function renderCotProjects() {
+  var el = document.getElementById('cot-project-list');
+  if (!cotFilteredProjects.length) {
+    el.innerHTML = '<div class="empty-state" style="padding:20px 12px">无项目目录</div>';
+    return;
+  }
+
+  el.innerHTML = cotFilteredProjects.map(function(p) {
+    var isActive = p.dir_name === cotSelectedProject;
+    return '<div class="cot-project-item' + (isActive ? ' active' : '') + '"' +
+      ' onclick="cotSelectProject(\'' + escHtml(p.dir_name) + '\')">' +
+      '<span class="cot-project-path" title="' + escHtml(p.path) + '">' + escHtml(p.path) + '</span>' +
+      '<span class="cot-project-count">' + p.session_count + '</span>' +
+    '</div>';
+  }).join('');
+}
+
+// 2. On project click
+async function cotSelectProject(dirName) {
+  cotSelectedProject = dirName;
+  cotSelectedSessionId = null;
+  renderCotProjects();
+  // Reset viewer
+  var viewer = document.getElementById('cot-viewer');
+  viewer.innerHTML = '<div class="cot-empty-viewer"><div class="cot-empty-viewer-title">Chain of Thought</div><div>选择一个会话查看</div></div>';
+
+  // Clear session search
+  document.getElementById('cot-session-search').value = '';
+
+  var listEl = document.getElementById('cot-session-list');
+  listEl.innerHTML = '<div class="empty-state" style="padding:20px 12px">加载中...</div>';
+
+  try {
+    var resp = await fetch(API_BASE + '/api/cot/sessions?project=' + encodeURIComponent(dirName));
     cotSessions = await resp.json();
+    cotFilteredSessions = cotSessions;
     renderCotSessions();
   } catch (e) {
-    document.getElementById('cot-session-list').innerHTML =
-      '<div class="empty-state">加载失败</div>';
+    listEl.innerHTML = '<div class="empty-state" style="padding:20px 12px">加载失败</div>';
   }
+}
+
+function cotFilterSessions() {
+  var q = (document.getElementById('cot-session-search').value || '').trim().toLowerCase();
+  if (q) {
+    cotFilteredSessions = cotSessions.filter(function(s) {
+      return (s.first_query || '').toLowerCase().indexOf(q) >= 0 ||
+             s.session_id.toLowerCase().indexOf(q) >= 0;
+    });
+  } else {
+    cotFilteredSessions = cotSessions;
+  }
+  renderCotSessions();
 }
 
 function renderCotSessions() {
   var el = document.getElementById('cot-session-list');
-  if (!cotSessions.length) {
-    el.innerHTML = '<div class="empty-state">暂无已索引的会话</div>';
+  if (!cotFilteredSessions.length) {
+    el.innerHTML = '<div class="empty-state" style="padding:20px 12px">暂无会话</div>';
     return;
   }
-  el.innerHTML = cotSessions.map(function(s) {
-    var isActive = s.session_id === cotSelectedId;
-    var query = s.first_query || s.session_id.substring(0, 8);
+
+  el.innerHTML = cotFilteredSessions.map(function(s) {
+    var isActive = s.session_id === cotSelectedSessionId;
+    var query = s.first_query || s.session_id.substring(0, 12);
     var timeStr = cotRelativeTime(s.last_timestamp);
-    var path = s.project_path || '';
     var sizeStr = cotFormatSize(s.file_size || 0);
     return '<div class="cot-session-item' + (isActive ? ' active' : '') + '"' +
       ' onclick="cotSelectSession(\'' + escHtml(s.session_id) + '\')">' +
       '<div class="cot-session-query">' + escHtml(query) + '</div>' +
       '<div class="cot-session-meta">' +
-        '<span class="cot-session-path">' + escHtml(path) + '</span>' +
-        '<span>' + escHtml(sizeStr) + '</span>' +
         '<span class="cot-session-time">' + escHtml(timeStr) + '</span>' +
+        '<span class="cot-session-size">' + escHtml(sizeStr) + '</span>' +
       '</div>' +
     '</div>';
   }).join('');
+}
+
+// 3. On session click
+function cotSelectSession(sessionId) {
+  cotSelectedSessionId = sessionId;
+  renderCotSessions();
+
+  var viewer = document.getElementById('cot-viewer');
+
+  // Build iframe URL
+  var iframeSrc = CUI_BASE + '/c/' + encodeURIComponent(sessionId) + '?embed=1';
+  if (cotCuiToken) {
+    iframeSrc += '#token=' + encodeURIComponent(cotCuiToken);
+  }
+
+  // Check if CUI is reachable — try to load iframe
+  // We set the iframe and show a fallback message underneath
+  viewer.innerHTML = '<iframe id="cot-iframe" src="' + escHtml(iframeSrc) + '" ' +
+    'style="width:100%;height:100%;border:none;" ' +
+    'onerror="cotIframeError()">' +
+    '</iframe>';
+}
+
+function cotIframeError() {
+  var viewer = document.getElementById('cot-viewer');
+  viewer.innerHTML = '<div class="cot-empty-viewer">' +
+    '<div class="cot-empty-viewer-title">CUI 服务未启动</div>' +
+    '<div>运行 cui-start 启动</div>' +
+    '</div>';
 }
 
 function cotRelativeTime(ts) {
@@ -2085,194 +2147,17 @@ function cotFormatSize(bytes) {
   return (bytes / 1024 / 1024).toFixed(1) + 'MB';
 }
 
-async function cotSelectSession(sid) {
-  cotSelectedId = sid;
-  cotMessages = [];
-  cotHasMore = true;
-  renderCotSessions();
-
-  var msgEl = document.getElementById('cot-messages');
-  msgEl.innerHTML = '<div class="empty-state">加载中...</div>';
-
-  try {
-    var resp = await fetch(API_BASE + '/api/cot/session/' + encodeURIComponent(sid) + '/messages?direction=tail&limit=20');
-    var msgs = await resp.json();
-    cotMessages = msgs;
-    cotHasMore = msgs.length >= 20;
-    renderCotMessages();
-    // scroll to bottom
-    msgEl.scrollTop = msgEl.scrollHeight;
-  } catch (e) {
-    msgEl.innerHTML = '<div class="empty-state">加载失败</div>';
-  }
-}
-
-async function cotLoadEarlier() {
-  if (cotLoading || !cotHasMore || !cotSelectedId) return;
-  cotLoading = true;
-
-  var firstLine = cotMessages.length > 0 ? cotMessages[0].line_number : 0;
-  // Load earlier messages using head direction with calculated offset
-  var offset = Math.max(0, firstLine - 21);
-  var limit = Math.min(20, firstLine - 1);
-  if (limit <= 0) {
-    cotHasMore = false;
-    cotLoading = false;
-    renderCotMessages();
-    return;
-  }
-
-  try {
-    var resp = await fetch(API_BASE + '/api/cot/session/' + encodeURIComponent(cotSelectedId) +
-      '/messages?direction=head&offset=' + offset + '&limit=' + limit);
-    var msgs = await resp.json();
-    if (msgs.length === 0) {
-      cotHasMore = false;
-    } else {
-      cotMessages = msgs.concat(cotMessages);
-    }
-    var msgEl = document.getElementById('cot-messages');
-    var oldHeight = msgEl.scrollHeight;
-    renderCotMessages();
-    // Maintain scroll position
-    msgEl.scrollTop = msgEl.scrollHeight - oldHeight;
-  } catch (e) {
-    // ignore
-  }
-  cotLoading = false;
-}
-
-function renderCotMessages() {
-  var el = document.getElementById('cot-messages');
-  if (!cotMessages.length) {
-    el.innerHTML = '<div class="empty-state">暂无消息</div>';
-    return;
-  }
-
-  var html = '';
-
-  // Load more button
-  if (cotHasMore) {
-    html += '<div class="cot-load-more"><button onclick="cotLoadEarlier()">加载更早的消息</button></div>';
-  }
-
-  cotMessages.forEach(function(msg, idx) {
-    var t = msg.type || '';
-    // Only show user, assistant, system types
-    if (t !== 'user' && t !== 'assistant' && t !== 'system') return;
-
-    var cssClass = 'cot-msg ' + t;
-    var roleLabel = t === 'user' ? '用户' : t === 'assistant' ? '助手' : '系统';
-    var modelBadge = '';
-    if (t === 'assistant' && msg.model) {
-      modelBadge = '<span class="cot-msg-model">' + escHtml(msg.model) + '</span>';
-    }
-    var timeStr = '';
-    if (msg.timestamp) {
-      try {
-        var d = new Date(msg.timestamp);
-        timeStr = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      } catch (e) {
-        timeStr = '';
-      }
-    }
-
-    html += '<div class="' + cssClass + '">';
-    html += '<div class="cot-msg-header">';
-    html += '<span class="cot-msg-role">' + roleLabel + '</span>';
-    html += modelBadge;
-    html += '<span class="cot-msg-time">' + escHtml(timeStr) + '</span>';
-    html += '</div>';
-
-    // Render content
-    var content = msg.content;
-    if (typeof content === 'string') {
-      html += '<div class="cot-msg-text">' + escHtml(content) + '</div>';
-    } else if (Array.isArray(content)) {
-      content.forEach(function(block, bi) {
-        if (typeof block === 'string') {
-          html += '<div class="cot-msg-text">' + escHtml(block) + '</div>';
-        } else if (typeof block === 'object' && block !== null) {
-          if (block.type === 'thinking') {
-            var thinkText = block.thinking || block.text || '';
-            var preview = thinkText.split('\n')[0].substring(0, 80);
-            var thinkId = 'think-' + idx + '-' + bi;
-            html += '<div class="cot-thinking">';
-            html += '<div class="cot-thinking-toggle" onclick="cotToggleThinking(\'' + thinkId + '\')">';
-            html += '<span class="cot-thinking-arrow" id="arrow-' + thinkId + '">&#9654;</span>';
-            html += '<span class="cot-thinking-preview">' + escHtml(preview || '(思考中...)') + '</span>';
-            html += '<span style="font-size:11px;color:var(--text-tertiary)">展开</span>';
-            html += '</div>';
-            html += '<div class="cot-thinking-body" id="body-' + thinkId + '">' + escHtml(thinkText) + '</div>';
-            html += '</div>';
-          } else if (block.type === 'tool_use') {
-            html += '<div class="cot-tool-use">';
-            html += '<span class="cot-tool-name">' + escHtml(block.name || 'tool') + '</span>';
-            if (block.input) {
-              var inputStr = typeof block.input === 'string' ? block.input : JSON.stringify(block.input);
-              if (inputStr.length > 200) inputStr = inputStr.substring(0, 200) + '...';
-              html += '<div style="margin-top:3px;opacity:0.7">' + escHtml(inputStr) + '</div>';
-            }
-            html += '</div>';
-          } else if (block.type === 'text') {
-            html += '<div class="cot-msg-text">' + escHtml(block.text || '') + '</div>';
-          } else if (block.type === 'tool_result') {
-            var resultText = '';
-            if (typeof block.content === 'string') {
-              resultText = block.content;
-            } else if (Array.isArray(block.content)) {
-              block.content.forEach(function(rb) {
-                if (typeof rb === 'string') resultText += rb;
-                else if (rb && rb.text) resultText += rb.text;
-              });
-            }
-            if (resultText.length > 300) resultText = resultText.substring(0, 300) + '...';
-            html += '<div class="cot-tool-use" style="border-left:2px solid var(--border)">';
-            html += escHtml(resultText);
-            html += '</div>';
-          }
-        }
-      });
-    }
-    html += '</div>';
-  });
-
-  el.innerHTML = html;
-}
-
-function cotToggleThinking(id) {
-  var body = document.getElementById('body-' + id);
-  var arrow = document.getElementById('arrow-' + id);
-  if (body.classList.contains('show')) {
-    body.classList.remove('show');
-    arrow.classList.remove('open');
-  } else {
-    body.classList.add('show');
-    arrow.classList.add('open');
-  }
-}
-
-// Infinite scroll up for CoT messages
-(function() {
-  var attached = false;
-  var observer = new MutationObserver(function() {
-    var el = document.getElementById('cot-messages');
-    if (el && !attached) {
-      attached = true;
-      el.addEventListener('scroll', function() {
-        if (el.scrollTop < 50 && cotHasMore && !cotLoading) {
-          cotLoadEarlier();
-        }
-      });
-    }
-  });
-  observer.observe(document.body, { childList: true, subtree: true });
-})();
-
-// Auto-refresh CoT session list every 10 seconds
+// Auto-refresh session list every 10 seconds (if a project is selected)
 setInterval(function() {
-  if (document.getElementById('tab-cot').classList.contains('active')) {
-    loadCotSessions();
+  if (document.getElementById('tab-cot').classList.contains('active') && cotSelectedProject) {
+    // Re-fetch sessions silently
+    fetch(API_BASE + '/api/cot/sessions?project=' + encodeURIComponent(cotSelectedProject))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        cotSessions = data;
+        cotFilterSessions();
+      })
+      .catch(function() {});
   }
 }, 10000);
 </script>

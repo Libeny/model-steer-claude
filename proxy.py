@@ -575,6 +575,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/api/cot/sessions":
             self._handle_cot_sessions(params)
 
+        elif path == "/api/cot/projects":
+            self._handle_cot_projects()
+
         elif path.startswith("/api/cot/session/") and path.endswith("/messages"):
             cot_sid = path[len("/api/cot/session/"):-len("/messages")]
             self._handle_cot_messages(cot_sid, params)
@@ -686,8 +689,89 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- CoT API endpoints ----
 
+    def _handle_cot_projects(self):
+        """List all project directories under ~/.claude/projects/ as a tree."""
+        projects_dir = Path.home() / ".claude" / "projects"
+        if not projects_dir.exists():
+            self._json([])
+            return
+
+        result = []
+        for d in sorted(projects_dir.iterdir()):
+            if not d.is_dir():
+                continue
+            # Convert dir name to readable path: -Users-limuyu-work-MuYu -> ~/work/MuYu
+            name = d.name
+            readable = name.replace("-", "/")
+            if readable.startswith("/Users/"):
+                parts = readable.split("/")
+                # /Users/username/rest -> ~/rest
+                readable = "~/" + "/".join(parts[3:]) if len(parts) > 3 else "~"
+
+            # Count jsonl files (sessions)
+            session_count = len([f for f in d.iterdir() if f.suffix == '.jsonl' and not f.name.startswith('agent-')])
+
+            result.append({
+                "dir_name": name,
+                "path": readable,
+                "session_count": session_count,
+            })
+
+        self._json(result)
+
     def _handle_cot_sessions(self, params):
         q = params.get("q", [""])[0].strip()
+        project = params.get("project", [""])[0].strip()
+
+        # If project is specified, scan that directory directly for jsonl files
+        if project:
+            projects_dir = Path.home() / ".claude" / "projects"
+            proj_dir = projects_dir / project
+            if not proj_dir.exists() or not proj_dir.is_dir():
+                self._json([])
+                return
+
+            result = []
+            for f in sorted(proj_dir.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+                if not f.suffix == '.jsonl' or f.name.startswith('agent-'):
+                    continue
+                session_id = f.stem
+                file_size = f.stat().st_size
+
+                # Try to get metadata from index first
+                conn = db_connect()
+                try:
+                    row = conn.execute(
+                        "SELECT first_query, last_timestamp FROM session_index WHERE session_id = ?",
+                        (session_id,),
+                    ).fetchone()
+                finally:
+                    conn.close()
+
+                if row:
+                    first_query = row["first_query"]
+                    last_timestamp = row["last_timestamp"]
+                else:
+                    # Fallback: extract from file
+                    first_query = _extract_first_query(str(f))
+                    last_timestamp = _extract_last_timestamp(str(f))
+
+                entry = {
+                    "session_id": session_id,
+                    "project_path": _dir_to_project_path(project),
+                    "first_query": first_query,
+                    "last_timestamp": last_timestamp,
+                    "file_size": file_size,
+                }
+                if q:
+                    like = q.lower()
+                    if like not in (first_query or "").lower() and like not in session_id.lower():
+                        continue
+                result.append(entry)
+
+            self._json(result[:100])
+            return
+
         conn = db_connect()
         try:
             if q:
