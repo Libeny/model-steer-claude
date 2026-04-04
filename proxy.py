@@ -1006,6 +1006,10 @@ class Handler(BaseHTTPRequestHandler):
             # Anthropic: passthrough all headers (OAuth compatible), fix signatures
             headers = {k: v for k, v in self.headers.items()
                        if k.lower() not in ("host", "content-length")}
+            has_xapi = bool(headers.get("x-api-key"))
+            has_auth = bool(headers.get("authorization"))
+            auth_preview = headers.get("authorization", "")[:30] if headers.get("authorization") else "none"
+            print(f"[msc] Anthropic auth: x-api-key={has_xapi} authorization={has_auth} preview={auth_preview}", flush=True)
             n = fix_signatures(req_body.get("messages", []))
             if n:
                 print(f"[msc] Fixed {n} signature(s)", flush=True)
