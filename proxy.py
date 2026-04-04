@@ -564,7 +564,7 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_status(sid)
 
         elif path == "/config":
-            self._handle_config_get()
+            self._handle_config_get(params)
 
         elif path == "/sessions":
             self._handle_sessions()
@@ -668,14 +668,15 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             conn.close()
 
-    def _handle_config_get(self):
+    def _handle_config_get(self, params=None):
         cfg = load_config()
-        # Mask provider keys
-        masked = json.loads(json.dumps(cfg))
-        for pname, prov in masked.get("providers", {}).items():
-            if "key" in prov:
-                prov["key"] = mask_key(prov["key"])
-        self._json(masked)
+        show_keys = params and params.get("show_keys", [""])[0] == "1"
+        if not show_keys:
+            cfg = json.loads(json.dumps(cfg))
+            for pname, prov in cfg.get("providers", {}).items():
+                if "key" in prov:
+                    prov["key"] = mask_key(prov["key"])
+        self._json(cfg)
 
     def _handle_ui(self):
         try:

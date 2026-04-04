@@ -915,7 +915,10 @@ tr:hover td {
     <div class="section">
       <div class="section-header">
         <div class="section-title">模型等级</div>
-        <button class="btn btn-primary btn-small" onclick="openAddModal()">+ 新增模型</button>
+        <div style="display:flex;gap:6px;align-items:center">
+          <button class="btn btn-ghost btn-small" id="toggle-keys-btn" onclick="toggleKeys()" title="显示/隐藏密钥" style="font-size:14px;padding:4px 8px">&#128065;</button>
+          <button class="btn btn-primary btn-small" onclick="openAddModal()">+ 新增模型</button>
+        </div>
       </div>
       <div class="model-list" id="sorted-list"
         ondragover="handleZoneDragOver(event,'sorted')"
@@ -1157,6 +1160,7 @@ const CNY_RATE = 7.25; // approximate USD to CNY
 let config = null;
 let configSnapshot = null;
 let currentAddType = 'claude';
+let keysVisible = false;
 let dragSourceEl = null;
 let modalMode = 'add'; // 'add' or 'edit'
 let editIdx = -1;
@@ -1229,7 +1233,11 @@ function renderSorted() {
       '<div class="model-body">' +
         '<div>' +
           '<div class="model-name">' + escHtml((level.name || '?').toUpperCase()) + '</div>' +
-          '<div class="model-meta">' + escHtml(level.model) + '</div>' +
+          '<div class="model-meta">' + escHtml(level.model) +
+            (keysVisible && config.providers && config.providers[level.provider] && config.providers[level.provider]._full_key
+              ? ' \u00b7 <span style="font-family:var(--font-mono);color:var(--text-tertiary)">' + escHtml(config.providers[level.provider]._full_key) + '</span>'
+              : '') +
+          '</div>' +
         '</div>' +
         colorDot +
         '<span class="provider-tag">' + provLabel + '</span>' +
@@ -1761,6 +1769,32 @@ function deletePool(idx) {
 // ═══════════════════════════════════════════
 // Undo / Save
 // ═══════════════════════════════════════════
+
+async function toggleKeys() {
+  keysVisible = !keysVisible;
+  var btn = document.getElementById('toggle-keys-btn');
+  if (keysVisible) {
+    // Fetch full keys from API
+    try {
+      var resp = await fetch('/config?show_keys=1');
+      var fullConfig = await resp.json();
+      // Update providers with full keys
+      if (fullConfig.providers) {
+        for (var pn in fullConfig.providers) {
+          if (config.providers && config.providers[pn]) {
+            config.providers[pn]._full_key = fullConfig.providers[pn].key;
+          }
+        }
+      }
+    } catch(e) {}
+    btn.style.color = 'var(--accent)';
+    btn.title = '隐藏密钥';
+  } else {
+    btn.style.color = '';
+    btn.title = '显示密钥';
+  }
+  renderAll();
+}
 
 function undoChanges() {
   if (!configSnapshot) return;
