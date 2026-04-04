@@ -572,6 +572,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == "/ui":
             self._handle_ui()
 
+        elif path.startswith("/cot/"):
+            self._handle_cot_static(path)
+
         elif path == "/api/cot/sessions":
             self._handle_cot_sessions(params)
 
@@ -687,6 +690,36 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(content.encode())
         except FileNotFoundError:
             self._json({"error": "dashboard.html not found"}, status=404)
+
+    def _handle_cot_static(self, path):
+        """Serve CUI static files from ui/cot/ directory."""
+        import mimetypes
+        # /cot/ → ui/cot/index.html, /cot/assets/x.js → ui/cot/assets/x.js
+        rel = path[len("/cot/"):] or "index.html"
+        if not rel or rel.endswith("/"):
+            rel += "index.html"
+        file_path = Path(__file__).resolve().parent / "ui" / "cot" / rel
+        # Security: prevent path traversal
+        try:
+            file_path = file_path.resolve()
+            cot_dir = (Path(__file__).resolve().parent / "ui" / "cot").resolve()
+            if not str(file_path).startswith(str(cot_dir)):
+                self.send_response(403)
+                self.end_headers()
+                return
+        except Exception:
+            self.send_response(400)
+            self.end_headers()
+            return
+        if not file_path.exists():
+            self.send_response(404)
+            self.end_headers()
+            return
+        mime, _ = mimetypes.guess_type(str(file_path))
+        self.send_response(200)
+        self.send_header("Content-Type", mime or "application/octet-stream")
+        self.end_headers()
+        self.wfile.write(file_path.read_bytes())
 
     # ---- CoT API endpoints ----
 

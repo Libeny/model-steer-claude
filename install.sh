@@ -133,9 +133,16 @@ cr() {
     crd
     return
   fi
+  # Start MSC proxy
   curl --noproxy '*' -s http://127.0.0.1:3457/ &>/dev/null || {
     PYTHONUNBUFFERED=1 nohup python3 ${INSTALL_DIR}/proxy.py >> /tmp/msc-proxy.log 2>&1 &
     for i in {1..20}; do curl --noproxy '*' -s http://127.0.0.1:3457/ &>/dev/null && break; sleep 0.2; done
+  }
+  # Start CUI (for CoT viewer)
+  curl --noproxy '*' -s http://localhost:4000/ &>/dev/null || {
+    if [ -f "\$HOME/work/cui-no-auth/dist/server.js" ]; then
+      nohup node "\$HOME/work/cui-no-auth/dist/server.js" --port 4000 --skip-auth-token >> /tmp/cui.log 2>&1 &
+    fi
   }
   unset ANTHROPIC_AUTH_TOKEN
   CLAUDE_CODE_DISABLE_1M_CONTEXT=1 NO_PROXY=127.0.0.1 ANTHROPIC_BASE_URL=http://127.0.0.1:3457 claude "\$@"

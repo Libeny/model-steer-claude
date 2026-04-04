@@ -55,64 +55,81 @@ body {
 }
 
 /* ═══ Interactive hover transition ═══ */
-a, button, .tab, .chip, .type-option, .color-dot, .cot-project-item, .cot-session-item, tr {
+a, button, .sidebar-item, .chip, .type-option, .color-dot, .cot-project-item, .cot-session-item, tr {
   transition: all 180ms ease;
 }
 
 /* ═══ Layout ═══ */
 .app {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 36px 20px 80px;
-}
-
-/* ═══ Header ═══ */
-.header {
-  margin-bottom: 32px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid var(--border);
-}
-.header-title {
-  font-size: 24px;
-  font-weight: 700;
-  letter-spacing: -0.3px;
-  color: var(--text-primary);
-}
-.header-title em {
-  font-style: normal;
-  color: var(--accent);
-}
-.header-subtitle {
-  color: var(--text-tertiary);
-  font-size: 13px;
-  margin-top: 2px;
-}
-
-/* ═══ Tabs ═══ */
-.tabs {
   display: flex;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 24px;
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  max-width: none;
 }
-.tab {
-  flex: 1;
-  text-align: center;
-  padding: 12px 24px;
-  font-size: 14px;
-  font-weight: 500;
-  color: var(--text-tertiary);
+
+/* ═══ Sidebar ═══ */
+.sidebar {
+  width: 64px;
+  min-height: 100vh;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px 0;
+  flex-shrink: 0;
+}
+.sidebar-logo {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--accent);
+  letter-spacing: 0.5px;
+  margin-bottom: 24px;
+  writing-mode: horizontal-tb;
+}
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 0 8px;
+}
+.sidebar-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 4px;
+  border-radius: 8px;
   cursor: pointer;
-  border-bottom: 2px solid transparent;
-  transition: all var(--transition);
+  color: var(--text-tertiary);
+  font-size: 9px;
+  font-weight: 500;
+  text-align: center;
+  transition: all 180ms ease;
   user-select: none;
 }
-.tab:hover {
+.sidebar-item:hover {
+  background: var(--bg);
   color: var(--text-secondary);
 }
-.tab.active {
+.sidebar-item.active {
+  background: var(--accent-light);
   color: var(--accent);
-  border-bottom-color: var(--accent);
 }
+.sidebar-icon {
+  width: 20px;
+  height: 20px;
+}
+.main-content {
+  flex: 1;
+  min-width: 0;
+  padding: 24px 32px;
+  overflow-y: auto;
+  max-height: 100vh;
+}
+
 .tab-content {
   display: none;
 }
@@ -927,18 +944,27 @@ tr:hover td {
 <body>
 
 <div class="app">
-  <!-- Header -->
-  <div class="header">
-    <div class="header-title"><em>MSC</em></div>
-    <div class="header-subtitle">模型方向盘 · 让 Claude Code / Claw 自己选模型</div>
-  </div>
+  <!-- Sidebar -->
+  <nav class="sidebar">
+    <div class="sidebar-logo">MSC</div>
+    <div class="sidebar-nav">
+      <div class="sidebar-item active" onclick="switchTab(0)">
+        <svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        模型
+      </div>
+      <div class="sidebar-item" onclick="switchTab(1)">
+        <svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        会话
+      </div>
+      <div class="sidebar-item" onclick="switchTab(2)">
+        <svg class="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+        CoT
+      </div>
+    </div>
+  </nav>
 
-  <!-- Tabs -->
-  <div class="tabs">
-    <div class="tab active" onclick="switchTab(0)">模型配置</div>
-    <div class="tab" onclick="switchTab(1)">会话管理</div>
-    <div class="tab" onclick="switchTab(2)">CoT</div>
-  </div>
+  <!-- Main content -->
+  <div class="main-content">
 
   <!-- ═══ Tab 1: 模型配置 ═══ -->
   <div class="tab-content active" id="tab-config">
@@ -1053,7 +1079,9 @@ tr:hover td {
       <iframe id="cot-iframe" style="width:100%;height:calc(100vh - 240px);border:none;background:#fff;border-radius:0 0 var(--radius-card) var(--radius-card)"></iframe>
     </div>
   </div>
-</div>
+
+  </div><!-- main-content -->
+</div><!-- app -->
 
 <!-- ═══ Unified Model Modal (Add / Edit) ═══ -->
 <div class="overlay" id="model-overlay" onclick="if(event.target===this)closeModal()">
@@ -1225,10 +1253,10 @@ let selectedColor = COLOR_PALETTE[0];
 // ═══════════════════════════════════════════
 
 function switchTab(index) {
-  var tabs = document.querySelectorAll('.tab');
+  var items = document.querySelectorAll('.sidebar-item');
   var contents = document.querySelectorAll('.tab-content');
-  for (var i = 0; i < tabs.length; i++) {
-    tabs[i].classList.toggle('active', i === index);
+  items.forEach(function(item, i) { item.classList.toggle('active', i === index); });
+  for (var i = 0; i < contents.length; i++) {
     contents[i].classList.toggle('active', i === index);
   }
   if (index === 1) loadSessionManagement();
@@ -2181,7 +2209,7 @@ function cotSelectSession(sessionId, title) {
   document.getElementById('cot-list-view').style.display = 'none';
   document.getElementById('cot-viewer-view').style.display = 'block';
   document.getElementById('cot-viewer-title').textContent = title || sessionId.substring(0, 8);
-  document.getElementById('cot-iframe').src = CUI_BASE + '/c/' + encodeURIComponent(sessionId) + '?embed&skip-auth';
+  document.getElementById('cot-iframe').src = CUI_BASE + '/c/' + encodeURIComponent(sessionId) + '?embed&skip-auth&theme=light';
 }
 
 // Back from viewer — return to two-column list view
