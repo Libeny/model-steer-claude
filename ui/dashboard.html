@@ -744,17 +744,32 @@ tr:hover td {
   overflow: hidden;
 }
 .cot-panel-projects {
-  width: 20%;
-  min-width: 180px;
-  border-right: 1px solid var(--border);
-}
-.cot-panel-sessions {
-  width: 25%;
+  width: 35%;
   min-width: 200px;
   border-right: 1px solid var(--border);
+  transition: width 0.25s ease;
+}
+.cot-panel-sessions {
+  width: 65%;
+  min-width: 240px;
+  transition: width 0.25s ease;
 }
 .cot-panel-viewer {
   flex: 1;
+  display: none;
+  background: #fff;
+}
+/* When viewer is open, shrink left panels */
+.cot-layout.viewer-open .cot-panel-projects {
+  width: 18%;
+}
+.cot-layout.viewer-open .cot-panel-sessions {
+  width: 22%;
+  border-right: 1px solid var(--border);
+}
+.cot-layout.viewer-open .cot-panel-viewer {
+  display: flex;
+  flex-direction: column;
 }
 .cot-panel-header {
   padding: 10px 12px;
@@ -865,28 +880,53 @@ tr:hover td {
 .cot-session-size {
   flex-shrink: 0;
 }
-/* Viewer iframe panel */
-.cot-iframe-wrap {
-  flex: 1;
+/* Viewer panel */
+.cot-viewer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: #fff;
+}
+.cot-viewer-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cot-viewer-close {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.cot-viewer-close:hover {
+  background: var(--destructive-bg);
+  color: var(--destructive);
+  border-color: var(--destructive);
+}
+.cot-iframe-wrap {
+  flex: 1;
+  background: #fff;
 }
 .cot-iframe-wrap iframe {
   width: 100%;
   height: 100%;
   border: none;
-}
-.cot-empty-viewer {
-  text-align: center;
-  color: var(--text-tertiary);
-  font-size: 14px;
-}
-.cot-empty-viewer-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  margin-bottom: 6px;
+  background: #fff;
 }
 </style>
 </head>
@@ -997,11 +1037,13 @@ tr:hover td {
           <div class="empty-state" style="padding:30px 12px">选择一个项目</div>
         </div>
       </div>
-      <!-- Right: CUI iframe -->
+      <!-- Right: CUI iframe (hidden until session selected) -->
       <div class="cot-panel cot-panel-viewer">
+        <div class="cot-viewer-header">
+          <div class="cot-viewer-title" id="cot-viewer-title">Chain of Thought</div>
+          <button class="cot-viewer-close" onclick="cotCloseViewer()" title="关闭">&times;</button>
+        </div>
         <div class="cot-iframe-wrap" id="cot-viewer">
-          <div class="cot-empty-viewer">
-            <div class="cot-empty-viewer-title">Chain of Thought</div>
             <div>选择一个会话查看</div>
           </div>
         </div>
@@ -1960,7 +2002,6 @@ var cotSelectedProject = null;
 var cotSessions = [];
 var cotFilteredSessions = [];
 var cotSelectedSessionId = null;
-var cotCuiToken = null;
 var cotProjectSearchTimer = null;
 var cotSessionSearchTimer = null;
 
@@ -1980,21 +2021,8 @@ function cotSessionSearchDebounced() {
   }, 200);
 }
 
-// Fetch CUI auth token
-async function cotFetchCuiToken() {
-  try {
-    var resp = await fetch(CUI_BASE + '/api/status');
-    var data = await resp.json();
-    cotCuiToken = data.token || '';
-  } catch (e) {
-    cotCuiToken = null;
-  }
-}
-
 // 1. Load projects on tab switch
 async function loadCotProjects() {
-  // Fetch token in parallel
-  if (cotCuiToken === null) cotFetchCuiToken();
 
   try {
     var resp = await fetch(API_BASE + '/api/cot/projects');
@@ -2086,7 +2114,7 @@ function renderCotSessions() {
     var timeStr = cotRelativeTime(s.last_timestamp);
     var sizeStr = cotFormatSize(s.file_size || 0);
     return '<div class="cot-session-item' + (isActive ? ' active' : '') + '"' +
-      ' onclick="cotSelectSession(\'' + escHtml(s.session_id) + '\')">' +
+      ' onclick="cotSelectSession(\'' + escHtml(s.session_id) + '\',\'' + escHtml(query).replace(/'/g, "\\'") + '\')">' +
       '<div class="cot-session-query">' + escHtml(query) + '</div>' +
       '<div class="cot-session-meta">' +
         '<span class="cot-session-time">' + escHtml(timeStr) + '</span>' +
@@ -2096,33 +2124,34 @@ function renderCotSessions() {
   }).join('');
 }
 
-// 3. On session click
-function cotSelectSession(sessionId) {
+// 3. On session click — open viewer panel
+function cotSelectSession(sessionId, title) {
   cotSelectedSessionId = sessionId;
   renderCotSessions();
 
-  var viewer = document.getElementById('cot-viewer');
+  // Show viewer panel
+  var layout = document.querySelector('.cot-layout');
+  layout.classList.add('viewer-open');
 
-  // Build iframe URL
+  // Set title
+  var titleEl = document.getElementById('cot-viewer-title');
+  titleEl.textContent = title || sessionId.substring(0, 8);
+
+  // Build iframe URL — no token needed
   var iframeSrc = CUI_BASE + '/c/' + encodeURIComponent(sessionId) + '?embed=1';
-  if (cotCuiToken) {
-    iframeSrc += '#token=' + encodeURIComponent(cotCuiToken);
-  }
-
-  // Check if CUI is reachable — try to load iframe
-  // We set the iframe and show a fallback message underneath
-  viewer.innerHTML = '<iframe id="cot-iframe" src="' + escHtml(iframeSrc) + '" ' +
-    'style="width:100%;height:100%;border:none;" ' +
-    'onerror="cotIframeError()">' +
-    '</iframe>';
+  var viewer = document.getElementById('cot-viewer');
+  viewer.innerHTML = '<iframe src="' + escHtml(iframeSrc) + '"></iframe>';
 }
 
-function cotIframeError() {
+// Close viewer — return to two-column layout
+function cotCloseViewer() {
+  var layout = document.querySelector('.cot-layout');
+  layout.classList.remove('viewer-open');
+  cotSelectedSessionId = null;
+  renderCotSessions();
+
   var viewer = document.getElementById('cot-viewer');
-  viewer.innerHTML = '<div class="cot-empty-viewer">' +
-    '<div class="cot-empty-viewer-title">CUI 服务未启动</div>' +
-    '<div>运行 cui-start 启动</div>' +
-    '</div>';
+  viewer.innerHTML = '';
 }
 
 function cotRelativeTime(ts) {
