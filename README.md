@@ -176,8 +176,8 @@ model-steer-claude/
 
 ## Contact
 
-- Email: libany0526@gmail.com
-- WeChat: BiothalMY
+- Email: libeny0526@gmail.com
+- WeChat: BiothaLMY
 
 ## License
 
