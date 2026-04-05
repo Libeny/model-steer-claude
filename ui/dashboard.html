@@ -416,11 +416,18 @@ a, button, .sidebar-item, .chip, .type-option, .color-dot, .cot-project-item, .c
   box-shadow: var(--shadow-elevated);
   width: 580px;
   max-width: 92vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
   animation: modalIn 200ms ease;
 }
 @keyframes modalIn {
   from { opacity: 0; transform: translateY(-10px); }
   to { opacity: 1; transform: none; }
+}
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 .modal-header {
   display: flex;
@@ -435,6 +442,8 @@ a, button, .sidebar-item, .chip, .type-option, .color-dot, .cot-project-item, .c
 }
 .modal-body {
   padding: 24px;
+  overflow-y: auto;
+  flex: 1;
 }
 .modal-footer {
   padding: 14px 24px;
@@ -773,12 +782,11 @@ tr:hover td {
 /* ═══ CoT Viewer — Two Column + Fullscreen ═══ */
 .cot-layout {
   display: flex;
-  height: calc(100vh - 180px);
+  height: 100vh;
   min-height: 500px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
+  border: none;
   overflow: hidden;
-  background: var(--surface);
+  background: #ffffff;
 }
 .cot-panel {
   display: flex;
@@ -880,6 +888,56 @@ tr:hover td {
   border-left: 3px solid var(--accent);
   background: var(--accent-light);
 }
+.cot-session-switch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+/* Model switch popover */
+.model-switch-popover {
+  position: absolute;
+  right: 8px;
+  top: 100%;
+  z-index: 50;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  padding: 6px;
+  min-width: 140px;
+  animation: modalIn 0.15s ease;
+}
+.model-switch-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.1s;
+  color: var(--text-primary);
+}
+.model-switch-option:hover {
+  background: var(--bg);
+}
+.model-switch-option.active {
+  background: var(--accent-light);
+  color: var(--accent-dark);
+}
+.model-switch-option .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.model-switch-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+}
 .cot-session-query {
   font-size: 13px;
   font-weight: 500;
@@ -909,9 +967,8 @@ tr:hover td {
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-  border-radius: var(--radius-card) var(--radius-card) 0 0;
+  border-bottom: 1px solid rgba(13,13,13,0.16);
+  background: #ffffff;
 }
 .cot-viewer-bar button {
   padding: 5px 12px;
@@ -938,6 +995,24 @@ tr:hover td {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ═══ CoT tab: break out of main-content padding ═══ */
+#tab-cot {
+  margin: -24px -32px;
+  height: 100vh;
+  overflow: hidden;
+}
+#tab-cot .cot-layout {
+  height: calc(100vh - 20px);
+}
+#cot-viewer-view {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+#cot-cui-frame {
+  flex: 1;
 }
 </style>
 </head>
@@ -968,80 +1043,128 @@ tr:hover td {
 
   <!-- ═══ Tab 1: 模型配置 ═══ -->
   <div class="tab-content active" id="tab-config">
-    <div class="section">
-      <div class="section-header">
-        <div class="section-title">模型等级</div>
-        <button class="btn btn-primary btn-small" onclick="openAddModal()">+ 新增模型</button>
+    <div class="card" style="padding:0;overflow:visible">
+      <!-- Header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)">
+        <div>
+          <div style="font-size:16px;font-weight:700;color:var(--text-primary)">模型等级</div>
+          <div style="font-size:12px;color:var(--text-tertiary);margin-top:2px">拖拽排序 · 点击卡片编辑</div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button class="btn btn-ghost btn-small" onclick="checkAllModels()" id="check-all-btn" title="检测所有模型可用性">检测可用性</button>
+          <button class="btn btn-primary btn-small" onclick="openAddModal()">+ 新增模型</button>
+        </div>
       </div>
-      <div class="model-list" id="sorted-list"
+      <!-- Model levels -->
+      <div class="model-list" id="sorted-list" style="padding:8px"
         ondragover="handleZoneDragOver(event,'sorted')"
         ondragleave="handleZoneDragLeave(event,'sorted')"
         ondrop="handleZoneDrop(event,'sorted')"></div>
-    </div>
-
-    <div class="divider"></div>
-
-    <div class="section">
-      <div class="section-header">
-        <div class="section-title">可用模型（未排序）</div>
+      <!-- Pool divider -->
+      <div style="padding:0 20px">
+        <div style="display:flex;align-items:center;gap:10px;color:var(--text-tertiary);font-size:12px">
+          <div style="flex:1;height:1px;background:var(--border)"></div>
+          <span>模型池 · 拖入上方分配等级</span>
+          <div style="flex:1;height:1px;background:var(--border)"></div>
+        </div>
       </div>
-      <div class="pool-list" id="pool-list"
+      <!-- Pool -->
+      <div class="pool-list" id="pool-list" style="padding:8px;min-height:48px"
         ondragover="handleZoneDragOver(event,'pool')"
         ondragleave="handleZoneDragLeave(event,'pool')"
         ondrop="handleZoneDrop(event,'pool')"></div>
-    </div>
-
-    <div class="action-bar">
-      <button class="btn btn-ghost" onclick="undoChanges()">撤销修改</button>
-      <button class="btn btn-primary" onclick="saveConfig()">保存配置</button>
+      <!-- Footer -->
+      <div style="display:flex;justify-content:flex-end;gap:8px;padding:12px 20px;border-top:1px solid var(--border);background:var(--bg)">
+        <button class="btn btn-ghost" onclick="undoChanges()">取消调整</button>
+        <button class="btn btn-primary" onclick="saveConfig()">保存配置</button>
+      </div>
     </div>
   </div>
 
-  <!-- ═══ Tab 2: 会话管理 ═══ -->
+  <!-- ═══ Tab 2: 用量分析 ═══ -->
   <div class="tab-content" id="tab-usage">
+    <!-- Claude 订阅看板 -->
+    <div class="card" id="claude-account-card" style="padding:20px;margin-bottom:16px;display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="width:36px;height:36px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px" id="claude-avatar">C</div>
+          <div>
+            <div style="font-size:14px;font-weight:600;color:var(--text-primary)" id="claude-email">-</div>
+            <div style="font-size:12px;color:var(--text-tertiary)" id="claude-sub-info">-</div>
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-small" onclick="refreshClaudeAccount()">刷新</button>
+      </div>
+      <!-- Usage bars -->
+      <div style="display:flex;flex-direction:column;gap:12px" id="claude-usage-bars">
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+            <span style="font-weight:500">5 小时额度</span>
+            <span id="claude-5h-pct" style="font-family:var(--font-mono)">-</span>
+          </div>
+          <div style="height:8px;background:var(--bg);border-radius:4px;overflow:hidden">
+            <div id="claude-5h-bar" style="height:100%;width:0%;border-radius:4px;transition:width 0.5s"></div>
+          </div>
+          <div style="font-size:11px;color:var(--text-tertiary);margin-top:2px" id="claude-5h-reset"></div>
+        </div>
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+            <span style="font-weight:500">7 天额度</span>
+            <span id="claude-7d-pct" style="font-family:var(--font-mono)">-</span>
+          </div>
+          <div style="height:8px;background:var(--bg);border-radius:4px;overflow:hidden">
+            <div id="claude-7d-bar" style="height:100%;width:0%;border-radius:4px;transition:width 0.5s"></div>
+          </div>
+          <div style="font-size:11px;color:var(--text-tertiary);margin-top:2px" id="claude-7d-reset"></div>
+        </div>
+        <div id="claude-sonnet-row">
+          <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+            <span style="font-weight:500">Sonnet 7 天额度</span>
+            <span id="claude-s7d-pct" style="font-family:var(--font-mono)">-</span>
+          </div>
+          <div style="height:8px;background:var(--bg);border-radius:4px;overflow:hidden">
+            <div id="claude-s7d-bar" style="height:100%;width:0%;border-radius:4px;transition:width 0.5s"></div>
+          </div>
+          <div style="font-size:11px;color:var(--text-tertiary);margin-top:2px" id="claude-s7d-reset"></div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+      <div style="display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden;font-size:12px">
+        <button id="cur-cny" onclick="setCurrency('CNY')" style="padding:3px 10px;border:none;cursor:pointer;font-weight:600;background:var(--accent);color:#fff">¥ CNY</button>
+        <button id="cur-usd" onclick="setCurrency('USD')" style="padding:3px 10px;border:none;cursor:pointer;font-weight:500;background:var(--bg);color:var(--text-secondary)">$ USD</button>
+      </div>
+    </div>
+
     <div class="stat-row">
-      <div class="card stat-card">
+      <div class="card stat-card" onclick="toggleDetail('token-detail')" style="cursor:pointer">
         <div class="stat-value" id="stat-tokens">-</div>
-        <div class="stat-label">总 Token</div>
+        <div class="stat-label">总 Token <span style="font-size:10px;opacity:0.5">▾</span></div>
+        <div id="token-detail" style="display:none;margin-top:10px;font-size:12px;text-align:left;border-top:1px solid var(--border);padding-top:8px"></div>
       </div>
-      <div class="card stat-card">
+      <div class="card stat-card" onclick="toggleDetail('cost-detail')" style="cursor:pointer">
         <div class="stat-value" id="stat-cost">-</div>
-        <div class="stat-label">混合模式费用</div>
+        <div class="stat-label">混合模式费用 <span style="font-size:10px;opacity:0.5">▾</span></div>
+        <div id="cost-detail" style="display:none;margin-top:10px;font-size:12px;text-align:left;border-top:1px solid var(--border);padding-top:8px"></div>
       </div>
-      <div class="card stat-card">
+      <div class="card stat-card" onclick="toggleDetail('saved-detail')" style="cursor:pointer">
         <div class="stat-value green" id="stat-saved">-</div>
-        <div class="stat-label" id="stat-saved-label">相比纯 Claude 模式</div>
+        <div class="stat-label" id="stat-saved-label">已为您节省 <span style="font-size:10px;opacity:0.5">▾</span></div>
+        <div id="saved-detail" style="display:none;margin-top:10px;font-size:12px;text-align:left;border-top:1px solid var(--border);padding-top:8px"></div>
       </div>
     </div>
 
-    <div style="display:flex;gap:12px;margin-bottom:16px;align-items:center">
-      <div style="flex:1;position:relative">
-        <svg style="position:absolute;left:10px;top:50%;transform:translateY(-50%);color:var(--text-tertiary)" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input class="field-input" id="session-search" placeholder="搜索 session / 路径 / 内容..." oninput="filterSessions()" style="padding-left:34px">
-      </div>
-      <select class="field-input" id="session-sort" onchange="sortSessions()" style="width:160px">
-        <option value="recent">最近活跃</option>
-        <option value="tokens">Token 消耗</option>
-        <option value="path">项目路径</option>
-      </select>
+    <!-- Model distribution -->
+    <div class="card" style="padding:20px">
+      <h3 style="font-size:14px;font-weight:600;margin-bottom:16px;color:var(--text-primary)">模型用量分布</h3>
+      <div id="model-distribution" style="display:flex;gap:16px;flex-wrap:wrap"></div>
     </div>
 
-    <div class="card" style="padding:0">
-      <table class="session-table">
-        <thead>
-          <tr>
-            <th>Session ID</th>
-            <th>首条消息</th>
-            <th>项目路径</th>
-            <th>当前模型</th>
-            <th>Token</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody id="session-tbody">
-          <tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-tertiary)">加载中...</td></tr>
-        </tbody>
-      </table>
+    <!-- Per-project usage -->
+    <div class="card" style="padding:20px;margin-top:16px">
+      <h3 style="font-size:14px;font-weight:600;margin-bottom:16px;color:var(--text-primary)">项目用量排行</h3>
+      <div id="project-usage"></div>
     </div>
   </div>
 
@@ -1061,8 +1184,9 @@ tr:hover td {
         </div>
         <!-- Right: Session list -->
         <div class="cot-panel cot-panel-sessions">
-          <div class="cot-panel-header">
-            <input class="cot-search" id="cot-session-search" placeholder="搜索会话..." oninput="cotSessionSearchDebounced()">
+          <div class="cot-panel-header" style="display:flex;gap:6px;align-items:center">
+            <input class="cot-search" id="cot-session-search" placeholder="搜索 session_id / 内容..." oninput="cotSessionSearchDebounced()" style="flex:1">
+            <button onclick="cotRefreshSessions()" title="刷新" style="padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-input);background:var(--surface);cursor:pointer;font-size:14px;color:var(--text-secondary);flex-shrink:0" id="cot-refresh-btn">&#8635;</button>
           </div>
           <div class="cot-scroll" id="cot-session-list">
             <div class="empty-state" style="padding:30px 12px">选择一个项目</div>
@@ -1070,13 +1194,13 @@ tr:hover td {
         </div>
       </div>
     </div>
-    <!-- Viewer view: full-width CUI iframe (replaces list view) -->
-    <div id="cot-viewer-view" style="display:none">
-      <div class="cot-viewer-bar">
-        <button onclick="cotGoBack()">&larr; 返回</button>
-        <span id="cot-viewer-title">Session Title</span>
+    <!-- Viewer view: CUI embedded full-page (no MSC header, CUI has its own) -->
+    <div id="cot-viewer-view" style="display:none;position:relative">
+      <iframe id="cot-cui-frame" style="width:100%;height:100vh;border:none;background:#fff"></iframe>
+      <!-- Floating model switcher -->
+      <div id="cot-viewer-model" style="position:absolute;top:8px;right:16px;z-index:10">
+        <span id="cot-viewer-model-badge" class="model-tag" style="font-size:10px;cursor:pointer" onclick="cotShowSwitchPopover(this, cotSelectedSessionId)" title="点击切换模型"></span>
       </div>
-      <iframe id="cot-iframe" style="width:100%;height:calc(100vh - 240px);border:none;background:#fff;border-radius:0 0 var(--radius-card) var(--radius-card)"></iframe>
     </div>
   </div>
 
@@ -1110,11 +1234,17 @@ tr:hover td {
       <div id="fields-claude">
         <div class="field">
           <label>模型</label>
-          <select id="add-claude-model">
-            <option value="claude-opus-4-6">Claude Opus 4.6</option>
-            <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
-            <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+          <select id="add-claude-model" onchange="onClaudeModelChange()">
+            <optgroup label="Claude 4.6">
+              <option value="claude-opus-4-6">Opus 4.6 (最强)</option>
+              <option value="claude-sonnet-4-6">Sonnet 4.6 (均衡)</option>
+            </optgroup>
+            <optgroup label="Claude 4.5">
+              <option value="claude-haiku-4-5-20251001">Haiku 4.5 (快速)</option>
+            </optgroup>
+            <option value="__custom__">自定义模型 ID...</option>
           </select>
+          <input id="add-claude-model-custom" placeholder="输入模型 ID，如 claude-sonnet-4-5-20250514" style="display:none;margin-top:6px">
         </div>
         <div class="field-row">
           <div class="field">
@@ -1131,33 +1261,31 @@ tr:hover td {
       <!-- Custom fields -->
       <div id="fields-custom" style="display:none">
         <div class="field" id="preset-field">
-          <label>预设</label>
+          <label>快速预设 <span style="font-weight:400;color:var(--text-tertiary)">（选择后自动填充，也可直接手填）</span></label>
           <div class="chips">
-            <div class="chip active" onclick="applyPreset('glm', this)">GLM</div>
+            <div class="chip" onclick="applyPreset('glm', this)">GLM (智谱)</div>
             <div class="chip" onclick="applyPreset('deepseek', this)">DeepSeek</div>
             <div class="chip" onclick="applyPreset('moonshot', this)">Moonshot</div>
-            <div class="chip" onclick="applyPreset('qwen', this)">Qwen</div>
+            <div class="chip" onclick="applyPreset('qwen', this)">Qwen (通义)</div>
           </div>
         </div>
         <div class="field-row">
           <div class="field">
             <label>显示名称</label>
-            <input id="add-custom-name" placeholder="glm">
+            <input id="add-custom-name" placeholder="如：glm、deepseek">
           </div>
           <div class="field">
-            <label>别名命令</label>
-            <input id="add-custom-alias" placeholder="cg">
+            <label>别名命令 <span style="font-weight:400;color:var(--text-tertiary)">（可选）</span></label>
+            <input id="add-custom-alias" placeholder="如：cg">
           </div>
         </div>
-        <div class="field-row">
-          <div class="field">
-            <label>API 地址</label>
-            <input id="add-custom-url" placeholder="https://...">
-          </div>
-          <div class="field">
-            <label>模型名称</label>
-            <input id="add-custom-model" placeholder="glm-5.1">
-          </div>
+        <div class="field">
+          <label>API 地址</label>
+          <input id="add-custom-url" placeholder="https://open.bigmodel.cn/api/anthropic/v1/messages">
+        </div>
+        <div class="field">
+          <label>模型名称</label>
+          <input id="add-custom-model" placeholder="如：glm-5.1、deepseek-chat">
         </div>
         <div class="field-row">
           <div class="field">
@@ -1186,6 +1314,12 @@ tr:hover td {
         </div>
       </div>
 
+      <!-- Routing context -->
+      <div class="field">
+        <label>路由场景 <span style="font-weight:400;color:var(--text-tertiary)">（什么时候使用这个模型）</span></label>
+        <input id="add-context" placeholder="如：代码开发、需求评审、测试工作">
+      </div>
+
       <!-- Color picker -->
       <div class="field">
         <label>模型颜色</label>
@@ -1197,10 +1331,24 @@ tr:hover td {
         <input type="checkbox" id="add-to-levels" checked>
         添加到模型等级
       </label>
+
+      <!-- Set as default checkbox (edit mode only) -->
+      <div id="set-default-row" style="display:none;margin-top:8px;padding:10px 12px;background:var(--bg);border-radius:var(--radius-input);border:1px solid var(--border)">
+        <label class="checkbox-row" style="margin:0">
+          <input type="checkbox" id="set-as-default">
+          <span>设为默认模型</span>
+        </label>
+        <div id="set-default-hint" style="font-size:11px;color:var(--text-tertiary);margin-top:4px;margin-left:22px">新 session 将使用此模型启动</div>
+      </div>
     </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal()">取消</button>
-      <button class="btn btn-primary" id="modal-submit-btn" onclick="submitModal()">添加</button>
+    <div class="modal-footer" style="display:flex;justify-content:space-between">
+      <div>
+        <button class="btn btn-ghost" id="modal-delete-btn" onclick="deleteFromModal()" style="display:none;color:var(--destructive)">删除此模型</button>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost" onclick="closeModal()">取消</button>
+        <button class="btn btn-primary" id="modal-submit-btn" onclick="submitModal()">添加</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1221,9 +1369,12 @@ tr:hover td {
 
 const API_BASE = '';
 
+// Prices in $/MTok. GLM original is ¥/MTok, converted here.
+const CNY_TO_USD = 1 / 7.25;
 const PRICE = {
-  glm:       { input: 0.55, output: 2.48 },
-  anthropic: { input: 5,    output: 25   }
+  glm:       { input: 0.55 * CNY_TO_USD, output: 2.48 * CNY_TO_USD, cache_read: 0.55 * CNY_TO_USD, cache_create: 0.55 * CNY_TO_USD },
+  sonnet:    { input: 3,    output: 15,   cache_read: 0.30, cache_create: 3.75 },
+  anthropic: { input: 3,    output: 15,   cache_read: 0.30, cache_create: 3.75 }
 };
 
 const PRESETS = {
@@ -1233,9 +1384,36 @@ const PRESETS = {
   qwen:     { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/messages',   model: 'qwen-max',        name: 'qwen',      alias: 'cq' }
 };
 
+var currentCurrency = 'CNY'; // 'CNY' or 'USD'
+
+function setCurrency(c) {
+  currentCurrency = c;
+  document.getElementById('cur-cny').style.background = c === 'CNY' ? 'var(--accent)' : 'var(--bg)';
+  document.getElementById('cur-cny').style.color = c === 'CNY' ? '#fff' : 'var(--text-secondary)';
+  document.getElementById('cur-usd').style.background = c === 'USD' ? 'var(--accent)' : 'var(--bg)';
+  document.getElementById('cur-usd').style.color = c === 'USD' ? '#fff' : 'var(--text-secondary)';
+  // Re-render stats with new currency
+  if (typeof allSessions !== 'undefined' && allSessions.length) {
+    renderStats(allSessions);
+  }
+}
+
+function fmtMoney(usd) {
+  if (currentCurrency === 'CNY') return '\u00a5' + (usd * CNY_RATE).toFixed(2);
+  return '$' + usd.toFixed(3);
+}
+
+function fmtMoneyDetail(usd) {
+  if (currentCurrency === 'CNY') return '\u00a5' + (usd * CNY_RATE).toFixed(4);
+  return '$' + usd.toFixed(4);
+}
+
 const COLOR_PALETTE = [
-  '#c96442', '#2d8a56', '#4a6fa5', '#7c5cbf',
-  '#d97706', '#0891b2', '#6366f1', '#9b9590'
+  '#c96442', '#e74c3c', '#e91e63', '#d97706',
+  '#f59e0b', '#84cc16', '#2d8a56', '#10b981',
+  '#0891b2', '#06b6d4', '#4a6fa5', '#3b82f6',
+  '#6366f1', '#7c5cbf', '#a855f7', '#ec4899',
+  '#78716c', '#9b9590'
 ];
 
 const CNY_RATE = 7.25; // approximate USD to CNY
@@ -1261,6 +1439,8 @@ function switchTab(index) {
   }
   if (index === 1) loadSessionManagement();
   if (index === 2) loadCotProjects();
+  // Save state
+  try { localStorage.setItem('msc-tab', String(index)); } catch(e) {}
 }
 
 // ═══════════════════════════════════════════
@@ -1276,6 +1456,16 @@ async function init() {
   } catch (e) {
     showToast('加载配置失败', 'error');
   }
+  // Restore last tab
+  try {
+    var savedTab = parseInt(localStorage.getItem('msc-tab') || '0');
+    if (savedTab > 0 && savedTab <= 2) switchTab(savedTab);
+    // Restore CoT project
+    var savedProject = localStorage.getItem('msc-cot-project');
+    if (savedTab === 2 && savedProject) {
+      setTimeout(function() { cotSelectProject(savedProject); }, 300);
+    }
+  } catch(e) {}
 }
 
 // ═══════════════════════════════════════════
@@ -1285,45 +1475,61 @@ async function init() {
 function render() {
   renderSorted();
   renderPool();
+  // Show dirty indicator
+  var isDirty = configSnapshot && JSON.stringify(config) !== configSnapshot;
+  var saveBtn = document.querySelector('#tab-config .btn-primary[onclick="saveConfig()"]');
+  var cancelBtn = document.querySelector('#tab-config .btn-ghost[onclick="undoChanges()"]');
+  if (saveBtn) saveBtn.style.opacity = isDirty ? '1' : '0.5';
+  if (cancelBtn) cancelBtn.style.display = isDirty ? '' : 'none';
 }
+
 
 function renderSorted() {
   var el = document.getElementById('sorted-list');
   var sorted = getSortedLevels();
+  var defaultLevel = config ? config.default_level || 1 : 1;
 
   if (!sorted.length) {
-    el.innerHTML = '<div class="pool-empty">暂无排序模型，点击「+ 新增模型」添加</div>';
+    el.innerHTML = '<div class="pool-empty" style="padding:24px;text-align:center;color:var(--text-tertiary)">暂无模型，点击「+ 新增模型」添加</div>';
     return;
   }
 
   el.innerHTML = sorted.map(function(entry, i) {
+    var levelNum = parseInt(entry[0]);
     var level = entry[1];
+    var isDefault = levelNum === defaultLevel;
     var provLabel = level.provider === 'anthropic' ? '官方' : '自定义';
-    var aliasHtml = level.alias ? '<span class="alias-chip">' + escHtml(level.alias) + '</span>' : '';
-    var colorDot = level.color ? '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + escHtml(level.color) + ';flex-shrink:0"></span>' : '';
+    var color = level.color || '#c96442';
+
+    var defaultBadge = isDefault ? '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:#2d8a5618;color:#2d8a56;font-weight:600;flex-shrink:0">默认</span>' : '';
+    var statusTitle = level._health_error || '';
+    var statusDot = level._status === 'ok' ? '<span title="可用" style="color:#2d8a56;font-size:12px">●</span>'
+      : level._status === 'fail' ? '<span title="' + escHtml(statusTitle || '不可用') + '" style="color:#e74c3c;font-size:12px">●</span>'
+      : level._status === 'warn' ? '<span title="' + escHtml(statusTitle) + '" style="color:#d97706;font-size:12px">●</span>'
+      : '';
 
     return '<div class="model-item" draggable="true" data-index="' + i + '"' +
       ' ondragstart="handleDragStart(event)"' +
       ' ondragend="handleDragEnd(event)"' +
       ' ondragover="handleDragOver(event)"' +
       ' ondragleave="handleDragLeave(event)"' +
-      ' ondrop="handleDrop(event)"' +
-      ' onclick="openEdit(' + i + ', event)"' +
-      ' style="cursor:pointer">' +
+      ' ondrop="handleDrop(event)">' +
       '<div class="model-grip">\u2807</div>' +
-      '<div class="model-rank" style="background:' + (level.color || '#c96442') + '20;color:' + (level.color || '#c96442') + '">' + (i + 1) + '</div>' +
+      '<div class="model-rank" style="background:' + color + '20;color:' + color + '">' + (i + 1) + '</div>' +
       '<div class="model-body">' +
         '<div>' +
           '<div class="model-name">' + escHtml((level.name || '?').toUpperCase()) + '</div>' +
           '<div class="model-meta">' + escHtml(level.model) + '</div>' +
+          (level.context ? '<div style="font-size:11px;color:var(--text-tertiary);margin-top:2px">' + escHtml(level.context) + '</div>' : '') +
         '</div>' +
-        colorDot +
+        '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + color + ';flex-shrink:0"></span>' +
         '<span class="provider-tag">' + provLabel + '</span>' +
-        aliasHtml +
+        defaultBadge +
+        statusDot +
       '</div>' +
       '<div class="model-actions">' +
-        '<button class="btn btn-ghost btn-small" onclick="moveToPool(' + i + ', event)">移出</button>' +
-        '<button class="btn-icon btn-destructive" title="删除" onclick="deleteSorted(' + i + ', event)">\u00d7</button>' +
+        '<button class="btn-icon" onclick="openEdit(' + i + ', event)" title="编辑" style="color:var(--text-tertiary)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>' +
+        '<button class="btn-icon" onclick="moveToPool(' + i + ', event)" title="降级到模型池" style="color:var(--text-tertiary)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12l7 7 7-7"/></svg></button>' +
       '</div>' +
     '</div>';
   }).join('');
@@ -1356,8 +1562,10 @@ function renderPool() {
         '</div>' +
         aliasHtml +
       '</div>' +
-      '<button class="btn btn-ghost btn-small" onclick="moveToSorted(' + i + ')">\u2191 加入等级</button>' +
-      '<button class="btn-icon btn-destructive" title="删除" onclick="deletePool(' + i + ')">\u00d7</button>' +
+      '<div class="model-actions">' +
+        '<button class="btn-icon" onclick="openEditPool(' + i + ', event)" title="编辑" style="color:var(--text-tertiary)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>' +
+        '<button class="btn-icon" onclick="confirmDeletePool(' + i + ', event)" title="删除" style="color:var(--text-tertiary)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></button>' +
+      '</div>' +
     '</div>';
   }).join('');
 }
@@ -1559,6 +1767,8 @@ function openAddModal() {
 
   document.getElementById('modal-title').textContent = '新增模型';
   document.getElementById('add-to-levels-row').style.display = '';
+  document.getElementById('set-default-row').style.display = 'none';
+  document.getElementById('modal-delete-btn').style.display = 'none';
   document.getElementById('modal-submit-btn').textContent = '添加';
   document.getElementById('modal-submit-btn').onclick = submitModal;
   document.getElementById('modal-type-selector').style.pointerEvents = '';
@@ -1570,7 +1780,7 @@ function openAddModal() {
 }
 
 function openEdit(idx, e) {
-  if (e.target.closest('.btn, .btn-icon, .model-grip')) return;
+  if (e && e.stopPropagation) e.stopPropagation();
   var sorted = getSortedLevels();
   if (!sorted[idx]) return;
 
@@ -1588,9 +1798,20 @@ function openEdit(idx, e) {
   options[1].classList.toggle('active', isCustom);
   updateTypeSelection();
 
-  // Hide checkbox in edit mode
+  // Edit mode UI
   document.getElementById('modal-title').textContent = '编辑模型';
   document.getElementById('add-to-levels-row').style.display = 'none';
+  document.getElementById('set-default-row').style.display = 'block';
+  var levelNum = parseInt(sorted[idx][0]);
+  var isCurrentDefault = (config.default_level || 1) === levelNum;
+  var cb = document.getElementById('set-as-default');
+  cb.checked = isCurrentDefault;
+  cb.disabled = isCurrentDefault; // Can't uncheck default — must set another as default
+  document.getElementById('set-default-hint').textContent = isCurrentDefault
+    ? '当前默认模型，如需更换请在其他模型上勾选此项'
+    : '新 session 将使用此模型启动';
+  // Show/hide delete button: can't delete default model
+  document.getElementById('modal-delete-btn').style.display = isCurrentDefault ? 'none' : '';
   document.getElementById('modal-submit-btn').textContent = '保存';
   document.getElementById('modal-submit-btn').onclick = submitModal;
   // Type selector still clickable in edit mode (to switch provider type if desired)
@@ -1639,6 +1860,7 @@ function openEdit(idx, e) {
     }
   }
 
+  document.getElementById('add-context').value = item.context || '';
   renderColorPicker(item.color || getDefaultColor());
   document.getElementById('model-overlay').classList.add('show');
 }
@@ -1647,6 +1869,20 @@ function closeModal() {
   document.getElementById('model-overlay').classList.remove('show');
   editIdx = -1;
   modalMode = 'add';
+}
+
+function onClaudeModelChange() {
+  var sel = document.getElementById('add-claude-model');
+  var custom = document.getElementById('add-claude-model-custom');
+  custom.style.display = sel.value === '__custom__' ? 'block' : 'none';
+}
+
+function getClaudeModel() {
+  var sel = document.getElementById('add-claude-model');
+  if (sel.value === '__custom__') {
+    return document.getElementById('add-claude-model-custom').value.trim();
+  }
+  return sel.value;
 }
 
 function selectType(type, el) {
@@ -1666,12 +1902,14 @@ function updateTypeSelection() {
 
 function resetModalFields() {
   var ids = ['add-claude-name', 'add-claude-alias', 'add-custom-name', 'add-custom-alias',
-             'add-custom-url', 'add-custom-model', 'add-custom-key', 'add-custom-proxy'];
+             'add-custom-url', 'add-custom-model', 'add-custom-key', 'add-custom-proxy', 'add-context'];
   ids.forEach(function(id) {
     document.getElementById(id).value = '';
   });
   document.getElementById('add-to-levels').checked = true;
   document.getElementById('add-claude-model').selectedIndex = 0;
+  document.getElementById('add-claude-model-custom').value = '';
+  document.getElementById('add-claude-model-custom').style.display = 'none';
   // Reset chips
   var chips = document.querySelectorAll('#fields-custom .chip');
   for (var i = 0; i < chips.length; i++) {
@@ -1712,7 +1950,8 @@ function submitAdd() {
   var item;
 
   if (currentAddType === 'claude') {
-    var model = document.getElementById('add-claude-model').value;
+    var model = getClaudeModel();
+    if (!model) { showToast('请输入模型名称', 'error'); return; }
     var name = document.getElementById('add-claude-name').value.trim() || model.split('-').slice(1, 2)[0] || 'claude';
     var alias = document.getElementById('add-claude-alias').value.trim();
     item = { name: name, provider: 'anthropic', model: model };
@@ -1742,6 +1981,8 @@ function submitAdd() {
   }
 
   item.color = selectedColor;
+  var ctx = document.getElementById('add-context').value.trim();
+  if (ctx) item.context = ctx;
 
   if (addToLevels) {
     var sorted = getSortedLevels().map(function(e) { return e[1]; });
@@ -1765,7 +2006,7 @@ function submitEdit() {
 
   if (currentAddType === 'claude') {
     item.name = document.getElementById('add-claude-name').value.trim() || item.name;
-    item.model = document.getElementById('add-claude-model').value;
+    item.model = getClaudeModel();
     var alias = document.getElementById('add-claude-alias').value.trim();
     item.alias = alias || undefined;
     // If switching from custom to claude
@@ -1795,23 +2036,118 @@ function submitEdit() {
   }
 
   item.color = selectedColor;
+  var ctx = document.getElementById('add-context').value.trim();
+  item.context = ctx || undefined;
+
+  // Handle default level change
+  var setDefault = document.getElementById('set-as-default').checked;
+  var sorted = getSortedLevels();
+  var levelNum = parseInt(sorted[editIdx][0]);
+  var currentDefault = config.default_level || 1;
+
+  if (setDefault && levelNum !== currentDefault) {
+    var oldName = '';
+    var oldLevel = config.levels[String(currentDefault)];
+    if (oldLevel) oldName = (oldLevel.name || '').toUpperCase();
+    var newName = (item.name || '').toUpperCase();
+    if (!confirm('确定将默认模型从 ' + oldName + ' 更改为 ' + newName + '？\n新 session 将使用 ' + newName + ' 启动')) {
+      return;
+    }
+    config.default_level = levelNum;
+  } else if (!setDefault && levelNum === currentDefault) {
+    // Unchecked default on current default → reset to level 1
+    config.default_level = 1;
+  }
 
   closeModal();
   render();
   showToast('已更新');
 }
 
+function deleteFromModal() {
+  if (editIdx < 0) return;
+  if (isDefaultLevel(editIdx)) {
+    showToast('默认模型不能删除，请先取消默认勾选并保存', 'error');
+    return;
+  }
+  var sorted = getSortedLevels();
+  if (sorted.length <= 1) {
+    showToast('至少保留一个模型等级', 'error');
+    return;
+  }
+  var name = (sorted[editIdx][1].name || '').toUpperCase();
+  if (!confirm('确定删除模型 ' + name + '？')) return;
+  deleteSorted(editIdx);
+  closeModal();
+}
+
+// ═══ Model availability check ═══
+
+async function checkAllModels() {
+  var btn = document.getElementById('check-all-btn');
+  btn.textContent = '检测中...';
+  btn.disabled = true;
+
+  try {
+    var resp = await fetch(API_BASE + '/health-check');
+    var results = await resp.json();
+    // Map results back to levels
+    var sorted = getSortedLevels();
+    for (var i = 0; i < sorted.length; i++) {
+      var levelNum = parseInt(sorted[i][0]);
+      var check = results[levelNum] || results[String(levelNum)];
+      if (check) {
+        sorted[i][1]._status = check.status;
+        sorted[i][1]._health_error = check.error || '';
+        sorted[i][1]._health_details = check.details || {};
+      }
+    }
+    render();
+    var failCount = Object.values(results).filter(function(r) { return r.status === 'fail'; }).length;
+    if (failCount > 0) {
+      showToast(failCount + ' 个模型不可用', 'error');
+    } else {
+      showToast('全部模型可用');
+    }
+  } catch (e) {
+    showToast('检测失败', 'error');
+  }
+
+  btn.textContent = '检测可用性';
+  btn.disabled = false;
+}
+
 // ═══════════════════════════════════════════
 // Move / Delete
 // ═══════════════════════════════════════════
 
+function isDefaultLevel(idx) {
+  var sorted = getSortedLevels();
+  var levelNum = parseInt(sorted[idx][0]);
+  return levelNum === (config.default_level || 1);
+}
+
 function moveToPool(idx, e) {
   if (e) e.stopPropagation();
   var sorted = getSortedLevels();
+  // Guard: can't move default model to pool
+  if (isDefaultLevel(idx)) {
+    showToast('默认模型不能降级，请先更换默认模型', 'error');
+    return;
+  }
+  // Guard: must keep at least one model in levels
+  if (sorted.length <= 1) {
+    showToast('至少保留一个模型等级', 'error');
+    return;
+  }
   var item = sorted[idx][1];
   var remaining = sorted.map(function(e) { return e[1]; });
   remaining.splice(idx, 1);
   rebuildLevels(remaining);
+  // Adjust default_level if it shifted
+  if (config.default_level > remaining.length) {
+    config.default_level = remaining.length;
+  }
   if (!config._pool) config._pool = [];
   config._pool.push(item);
   render();
@@ -1830,22 +2166,49 @@ function moveToSorted(idx) {
 function deleteSorted(idx, e) {
   if (e) e.stopPropagation();
   var sorted = getSortedLevels();
+  // Guard: can't delete default model
+  if (isDefaultLevel(idx)) {
+    showToast('默认模型不能删除，请先更换默认模型', 'error');
+    return;
+  }
+  // Guard: must keep at least one
+  if (sorted.length <= 1) {
+    showToast('至少保留一个模型等级', 'error');
+    return;
+  }
   var name = (sorted[idx][1].name || '?').toUpperCase();
-  if (!confirm('\u5220\u9664 ' + name + ' \uff1f')) return;
+  if (!confirm('确定删除 ' + name + '？')) return;
   var remaining = sorted.map(function(e) { return e[1]; });
   remaining.splice(idx, 1);
   rebuildLevels(remaining);
+  if (config.default_level > remaining.length) {
+    config.default_level = remaining.length;
+  }
   render();
-  showToast('\u5df2\u5220\u9664 ' + name);
+  showToast('已删除 ' + name);
 }
 
 function deletePool(idx) {
   var pool = config._pool || [];
-  var name = (pool[idx].name || '?').toUpperCase();
-  if (!confirm('\u5220\u9664 ' + name + ' \uff1f')) return;
   pool.splice(idx, 1);
   render();
-  showToast('\u5df2\u5220\u9664 ' + name);
+}
+
+function confirmDeletePool(idx, e) {
+  if (e) e.stopPropagation();
+  var pool = config._pool || [];
+  if (!pool[idx]) return;
+  var name = (pool[idx].name || '?').toUpperCase();
+  if (!confirm('确定删除模型 ' + name + '？\n此操作不可撤销。')) return;
+  deletePool(idx);
+  showToast('已删除 ' + name);
+}
+
+function openEditPool(idx, e) {
+  if (e) e.stopPropagation();
+  // TODO: implement pool item editing (similar to openEdit but for pool items)
+  // For now, just show a toast
+  showToast('模型池编辑功能开发中');
 }
 
 // ═══════════════════════════════════════════
@@ -1878,6 +2241,18 @@ function undoChanges() {
 }
 
 async function saveConfig() {
+  // Validation before save
+  var sorted = getSortedLevels();
+  if (sorted.length === 0) {
+    showToast('至少需要一个模型等级', 'error');
+    return;
+  }
+  var defaultLevel = config.default_level || 1;
+  var defaultExists = sorted.some(function(e) { return parseInt(e[0]) === defaultLevel; });
+  if (!defaultExists) {
+    showToast('默认模型等级 ' + defaultLevel + ' 不存在，请重新设置默认', 'error');
+    return;
+  }
   try {
     var resp = await fetch(API_BASE + '/config', {
       method: 'POST',
@@ -1887,6 +2262,9 @@ async function saveConfig() {
     if (resp.ok) {
       configSnapshot = JSON.stringify(config);
       showToast('配置已保存', 'success');
+      // Sync CoT session list with new config
+      cotMscSessions = {};
+      if (cotSelectedProject) cotRefreshSessions();
     } else {
       showToast('保存失败', 'error');
     }
@@ -1903,6 +2281,8 @@ var allSessions = [];
 var filteredSessions = [];
 
 async function loadSessionManagement() {
+  // Load Claude account info
+  refreshClaudeAccount();
   // Fetch sessions + CoT index for first_query and path
   try {
     var [sessResp, cotResp] = await Promise.all([
@@ -1925,123 +2305,289 @@ async function loadSessionManagement() {
         label: s.label || 'GLM',
         first_query: cot.first_query || '',
         project_path: cot.project_path || '',
-        total_tokens: (s.usage || []).reduce(function(sum, u) { return sum + (u.input_tokens||0) + (u.output_tokens||0); }, 0),
+        total_tokens: (s.usage || []).reduce(function(sum, u) { return sum + (u.input_tokens||0) + (u.output_tokens||0) + (u.cache_read_tokens||0) + (u.cache_create_tokens||0); }, 0),
         usage: s.usage || [],
         updated_at: s.updated_at || s.created_at || ''
       };
+    }).filter(function(s) {
+      return s.first_query || s.total_tokens > 0;
     });
 
-    filteredSessions = allSessions.slice();
-    sortSessions();
     renderStats(allSessions);
+    renderModelDistribution(allSessions);
+    renderProjectUsage(allSessions, cotData);
   } catch(e) {
     document.getElementById('session-tbody').innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-tertiary)">无法加载数据</td></tr>';
   }
 }
 
-function filterSessions() {
-  var q = (document.getElementById('session-search').value || '').toLowerCase();
-  if (!q) {
-    filteredSessions = allSessions.slice();
-  } else {
-    filteredSessions = allSessions.filter(function(s) {
-      return s.session_id.toLowerCase().includes(q) ||
-        s.first_query.toLowerCase().includes(q) ||
-        s.project_path.toLowerCase().includes(q);
-    });
+// ── Usage Analytics ──
+
+async function refreshClaudeAccount() {
+  try {
+    var resp = await fetch(API_BASE + '/api/claude-account');
+    var data = await resp.json();
+    var card = document.getElementById('claude-account-card');
+    if (!data.logged_in) { card.style.display = 'none'; return; }
+    card.style.display = 'block';
+
+    // Account info
+    var email = data.email || 'Claude User';
+    document.getElementById('claude-email').textContent = email;
+    document.getElementById('claude-avatar').textContent = (email[0] || 'C').toUpperCase();
+    var subMap = { max: 'Max 订阅', pro: 'Pro 订阅', free: '免费版', unknown: '-' };
+    var tokenInfo = data.token_expired ? ' · Token 已过期' : (data.token_expires_in_hours ? ' · Token ' + data.token_expires_in_hours + 'h 后过期' : '');
+    document.getElementById('claude-sub-info').textContent = (subMap[data.subscription] || data.subscription) + tokenInfo;
+
+    // Usage bars
+    var usage = data.usage || {};
+    renderUsageBar('claude-5h', usage.five_hour_usage, usage.five_hour_reset);
+    renderUsageBar('claude-7d', usage.seven_day_usage, usage.seven_day_reset);
+    if (usage.seven_day_sonnet_usage !== undefined && usage.seven_day_sonnet_usage !== null) {
+      document.getElementById('claude-sonnet-row').style.display = '';
+      renderUsageBar('claude-s7d', usage.seven_day_sonnet_usage, usage.seven_day_sonnet_reset);
+    } else {
+      document.getElementById('claude-sonnet-row').style.display = 'none';
+    }
+  } catch (e) {
+    document.getElementById('claude-account-card').style.display = 'none';
   }
-  renderSessionTable();
 }
 
-function sortSessions() {
-  var sort = document.getElementById('session-sort').value;
-  filteredSessions.sort(function(a, b) {
-    if (sort === 'tokens') return b.total_tokens - a.total_tokens;
-    if (sort === 'path') return (a.project_path || '').localeCompare(b.project_path || '');
-    return (b.updated_at || '').localeCompare(a.updated_at || ''); // recent
+function renderUsageBar(prefix, pct, resetIso) {
+  if (pct === undefined || pct === null) return;
+  var color = pct >= 85 ? '#e74c3c' : pct >= 60 ? '#d97706' : '#2d8a56';
+  document.getElementById(prefix + '-pct').textContent = pct + '%';
+  document.getElementById(prefix + '-pct').style.color = color;
+  var bar = document.getElementById(prefix + '-bar');
+  bar.style.width = Math.min(pct, 100) + '%';
+  bar.style.background = color;
+  var resetEl = document.getElementById(prefix + '-reset');
+  if (resetIso && resetEl) {
+    try {
+      var d = new Date(resetIso);
+      var now = new Date();
+      var diffSec = (d - now) / 1000;
+      if (diffSec <= 0) {
+        resetEl.textContent = '即将重置';
+      } else if (diffSec < 86400) {
+        // <1天：显示具体时间 HH:MM
+        var hh = String(d.getHours()).padStart(2, '0');
+        var mm = String(d.getMinutes()).padStart(2, '0');
+        var diffH = Math.floor(diffSec / 3600);
+        var diffM = Math.floor((diffSec % 3600) / 60);
+        resetEl.textContent = '重置于 ' + hh + ':' + mm + '（' + diffH + 'h' + diffM + 'm 后）';
+      } else {
+        var days = Math.floor(diffSec / 86400);
+        var hours = Math.floor((diffSec % 86400) / 3600);
+        resetEl.textContent = '重置于 ' + days + '天' + hours + '小时后';
+      }
+    } catch (e) { resetEl.textContent = ''; }
+  }
+}
+
+function renderModelDistribution(sessions) {
+  var el = document.getElementById('model-distribution');
+  // Aggregate tokens by each usage record's label (not session's current label)
+  var modelTokens = {};
+  var totalTokens = 0;
+  sessions.forEach(function(s) {
+    (s.usage || []).forEach(function(u) {
+      var label = u.label || u.provider || 'Unknown';
+      var tokens = (u.input_tokens||0) + (u.output_tokens||0) + (u.cache_read_tokens||0);
+      modelTokens[label] = (modelTokens[label] || 0) + tokens;
+      totalTokens += tokens;
+    });
   });
-  renderSessionTable();
-}
 
-function renderSessionTable() {
-  var tbody = document.getElementById('session-tbody');
-  if (!filteredSessions.length) {
-    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-tertiary)">暂无会话</td></tr>';
+  if (totalTokens === 0) {
+    el.innerHTML = '<div style="color:var(--text-tertiary);font-size:13px">暂无用量数据</div>';
     return;
   }
-  tbody.innerHTML = filteredSessions.map(function(s) {
-    var query = s.first_query || '(无消息)';
-    if (query.length > 40) query = query.substring(0, 40) + '...';
-    var path = s.project_path || '-';
-    return '<tr>' +
-      '<td><span style="font-family:var(--font-mono);font-size:12px;word-break:break-all">' + escHtml(s.session_id) + '</span></td>' +
-      '<td>' + escHtml(query) + '</td>' +
-      '<td style="color:var(--text-secondary);font-size:12px">' + escHtml(path) + '</td>' +
-      '<td><span class="model-tag">' + escHtml(s.label) + '</span></td>' +
-      '<td style="font-family:var(--font-mono)">' + s.total_tokens.toLocaleString() + '</td>' +
-      '<td><button class="btn btn-ghost btn-small" onclick="openSwitchModal(\'' + escHtml(s.session_id) + '\',' + s.level + ')">切换</button></td>' +
-    '</tr>';
-  }).join('');
-}
 
-function openSwitchModal(sessionId, currentLevel) {
-  var levels = config ? config.levels || {} : {};
-  var options = Object.entries(levels).map(function(e) {
-    var num = e[0], lv = e[1];
-    var isCurrent = parseInt(num) === currentLevel;
-    return '<button class="btn ' + (isCurrent ? 'btn-primary' : 'btn-ghost') + '" style="margin:4px" ' +
-      (isCurrent ? 'disabled' : 'onclick="switchSessionModel(\'' + sessionId + '\',' + num + ')"') + '>' +
-      'Level ' + num + ' (' + escHtml((lv.name||'?').toUpperCase()) + ')' +
-    '</button>';
-  }).join('');
-
-  var content = '<div style="text-align:center;padding:16px"><div style="margin-bottom:12px;color:var(--text-secondary);font-size:13px">选择模型等级</div>' + options + '</div>';
-  document.getElementById('switch-content').innerHTML = content;
-  document.getElementById('switch-overlay').classList.add('show');
-}
-
-function closeSwitchModal() {
-  document.getElementById('switch-overlay').classList.remove('show');
-}
-
-async function switchSessionModel(sessionId, level) {
-  try {
-    await fetch('/think-level?session=' + encodeURIComponent(sessionId) + '&level=' + level);
-    closeSwitchModal();
-    showToast('已切换');
-    loadSessionManagement();
-  } catch(e) {
-    showToast('切换失败', 'error');
+  // Build color map from config levels
+  var colors = {};
+  if (config && config.levels) {
+    Object.values(config.levels).forEach(function(lv) {
+      if (lv.name && lv.color) colors[lv.name.toUpperCase()] = lv.color;
+    });
   }
+  el.innerHTML = Object.entries(modelTokens).sort(function(a,b) { return b[1]-a[1]; }).map(function(e) {
+    var label = e[0], tokens = e[1];
+    var pct = totalTokens > 0 ? (tokens / totalTokens * 100).toFixed(1) : 0;
+    var color = colors[label] || '#888';
+    return '<div style="flex:1;min-width:140px">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">' +
+        '<div style="width:10px;height:10px;border-radius:50%;background:' + color + '"></div>' +
+        '<span style="font-weight:600;font-size:13px">' + escHtml(label) + '</span>' +
+        '<span style="color:var(--text-tertiary);font-size:12px">' + pct + '%</span>' +
+      '</div>' +
+      '<div style="height:6px;background:var(--bg);border-radius:3px;overflow:hidden">' +
+        '<div style="height:100%;width:' + pct + '%;background:' + color + ';border-radius:3px;transition:width 0.3s"></div>' +
+      '</div>' +
+      '<div style="margin-top:4px;font-family:var(--font-mono);font-size:12px;color:var(--text-secondary)">' + tokens.toLocaleString() + ' tokens</div>' +
+    '</div>';
+  }).join('');
+}
+
+function renderProjectUsage(sessions, cotData) {
+  var el = document.getElementById('project-usage');
+  var cotMap = {};
+  cotData.forEach(function(c) { cotMap[c.session_id] = c; });
+
+  // Build color map from config
+  var levelColors = {};
+  if (config && config.levels) {
+    Object.values(config.levels).forEach(function(lv) {
+      if (lv.name) levelColors[lv.name.toUpperCase()] = lv.color || '#888';
+    });
+  }
+
+  // Aggregate per project, per model
+  var projects = {};
+  sessions.forEach(function(s) {
+    var cot = cotMap[s.session_id];
+    var path = (cot && cot.project_path) ? cot.project_path : s.project_path || '(未知)';
+    var short = cotShortPath(path);
+    if (!projects[short]) projects[short] = { total: 0, sessions: 0, path: path, models: {}, cost: 0 };
+    projects[short].sessions++;
+    (s.usage || []).forEach(function(u) {
+      var label = u.label || u.provider || 'Unknown';
+      var inp = u.input_tokens||0, out = u.output_tokens||0, crd = u.cache_read_tokens||0, ccr = u.cache_create_tokens||0;
+      var tokens = inp + out + crd + ccr;
+      projects[short].total += tokens;
+      projects[short].models[label] = (projects[short].models[label] || 0) + tokens;
+      var p = PRICE[u.provider] || PRICE.sonnet;
+      projects[short].cost += (inp/1e6)*p.input + (out/1e6)*p.output + (crd/1e6)*(p.cache_read||p.input) + (ccr/1e6)*(p.cache_create||p.input);
+    });
+  });
+
+  var sorted = Object.entries(projects).sort(function(a,b) { return b[1].total - a[1].total; });
+  if (!sorted.length || sorted[0][1].total === 0) {
+    el.innerHTML = '<div style="color:var(--text-tertiary);font-size:13px">暂无用量数据</div>';
+    return;
+  }
+
+  var maxTokens = sorted[0][1].total || 1;
+  el.innerHTML = sorted.map(function(e) {
+    var name = e[0], info = e[1];
+    var barPct = (info.total / maxTokens * 100);
+
+    // Stacked bar segments by model
+    var segments = Object.entries(info.models).sort(function(a,b){ return b[1]-a[1]; });
+    var barHtml = segments.map(function(seg) {
+      var label = seg[0], t = seg[1];
+      var w = info.total > 0 ? (t / info.total * barPct).toFixed(1) : 0;
+      var color = levelColors[label] || '#888';
+      return '<div style="height:100%;width:' + w + '%;background:' + color + '" title="' + escHtml(label) + ' ' + t.toLocaleString() + '"></div>';
+    }).join('');
+
+    return '<div style="display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid var(--border)">' +
+      '<div style="width:130px;font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="' + escHtml(info.path) + '">' + escHtml(name) + '</div>' +
+      '<div style="flex:1;height:8px;background:var(--bg);border-radius:4px;overflow:hidden;display:flex">' +
+        barHtml +
+      '</div>' +
+      '<div style="width:80px;text-align:right;font-family:var(--font-mono);font-size:11px;color:var(--text-secondary)">' + fmtMoney(info.cost) + '</div>' +
+      '<div style="width:50px;text-align:right;font-size:11px;color:var(--text-tertiary)">' + info.sessions + ' 会话</div>' +
+    '</div>';
+  }).join('');
+}
+
+function toggleDetail(id) {
+  var el = document.getElementById(id);
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
 }
 
 function renderStats(sessions) {
-  var totalTokens = 0;
-  var mixedCost = 0;
-  var fullCost = 0;
+  var totals = { input: 0, output: 0, cache_read: 0, cache_create: 0 };
+  var costs = { input: 0, output: 0, cache_read: 0, cache_create: 0 };
+  // Savings: only count non-Anthropic tokens (the ones we replaced with cheaper models)
+  var savedSonnetCost = 0; // what those tokens would cost on Sonnet
+  var savedActualCost = 0; // what they actually cost on the cheap model
 
   sessions.forEach(function(s) {
     (s.usage || []).forEach(function(u) {
       var inp = u.input_tokens || 0;
       var out = u.output_tokens || 0;
-      totalTokens += inp + out;
+      var cr = u.cache_read_tokens || 0;
+      var cc = u.cache_create_tokens || 0;
 
-      var p = PRICE[u.provider] || PRICE.anthropic;
-      mixedCost += (inp / 1e6) * p.input + (out / 1e6) * p.output;
-      fullCost += (inp / 1e6) * PRICE.anthropic.input + (out / 1e6) * PRICE.anthropic.output;
+      totals.input += inp;
+      totals.output += out;
+      totals.cache_read += cr;
+      totals.cache_create += cc;
+
+      var p = PRICE[u.provider] || PRICE.sonnet;
+      costs.input += (inp / 1e6) * p.input;
+      costs.output += (out / 1e6) * p.output;
+      costs.cache_read += (cr / 1e6) * (p.cache_read || p.input);
+      costs.cache_create += (cc / 1e6) * (p.cache_create || p.input);
+
+      // Non-Anthropic tokens: calculate savings vs Sonnet
+      if (u.provider !== 'anthropic') {
+        var fp = PRICE.sonnet;
+        savedSonnetCost += (inp / 1e6) * fp.input + (out / 1e6) * fp.output
+          + (cr / 1e6) * fp.cache_read + (cc / 1e6) * fp.cache_create;
+        savedActualCost += (inp / 1e6) * p.input + (out / 1e6) * p.output
+          + (cr / 1e6) * (p.cache_read || p.input) + (cc / 1e6) * (p.cache_create || p.input);
+      }
     });
   });
 
-  document.getElementById('stat-tokens').textContent = totalTokens.toLocaleString();
-  document.getElementById('stat-cost').textContent = '$' + mixedCost.toFixed(3);
+  var totalTokens = totals.input + totals.output + totals.cache_read + totals.cache_create;
+  var mixedCost = costs.input + costs.output + costs.cache_read + costs.cache_create;
 
-  var saved = fullCost - mixedCost;
-  var pct = fullCost > 0 ? Math.round((saved / fullCost) * 100) : 0;
-  var cny = (saved * CNY_RATE).toFixed(2);
+  document.getElementById('stat-tokens').textContent = totalTokens.toLocaleString();
+  document.getElementById('stat-cost').textContent = fmtMoney(mixedCost);
+
+  // Token breakdown detail
+  var tokenRows = [
+    { label: 'Input',        val: totals.input },
+    { label: 'Output',       val: totals.output },
+    { label: 'Cache Read',   val: totals.cache_read },
+    { label: 'Cache Create', val: totals.cache_create }
+  ];
+  document.getElementById('token-detail').innerHTML = tokenRows.map(function(r) {
+    return '<div style="display:flex;justify-content:space-between;padding:2px 0;color:var(--text-secondary)">' +
+      '<span>' + r.label + '</span>' +
+      '<span style="font-family:var(--font-mono)">' + r.val.toLocaleString() + '</span></div>';
+  }).join('');
+
+  // Cost breakdown detail
+  var costRows = [
+    { label: 'Input',        val: costs.input },
+    { label: 'Output',       val: costs.output },
+    { label: 'Cache Read',   val: costs.cache_read },
+    { label: 'Cache Create', val: costs.cache_create }
+  ];
+  document.getElementById('cost-detail').innerHTML = costRows.map(function(r) {
+    return '<div style="display:flex;justify-content:space-between;padding:2px 0;color:var(--text-secondary)">' +
+      '<span>' + r.label + '</span>' +
+      '<span style="font-family:var(--font-mono)">' + fmtMoneyDetail(r.val) + '</span></div>';
+  }).join('');
+
+  // Saved = Sonnet equivalent cost of non-Claude tokens - actual cheap model cost
+  // Saved = Sonnet equivalent of non-Claude tokens - their actual cost
+  // Percentage = saved / sonnet equivalent (how much cheaper vs Sonnet for those tokens)
+  var saved = savedSonnetCost - savedActualCost;
+  var pct = savedSonnetCost > 0 ? Math.round((saved / savedSonnetCost) * 100) : 0;
   document.getElementById('stat-saved').textContent =
-    saved > 0 ? '-$' + saved.toFixed(3) + ' (' + pct + '%)' : '$0.000';
-  document.getElementById('stat-saved-label').textContent =
-    saved > 0 ? '相比纯 Claude 模式 · 约 \u00a5' + cny : '相比纯 Claude 模式';
+    saved > 0 ? fmtMoney(saved) + ' (-' + pct + '%)' : fmtMoney(0);
+  document.getElementById('stat-saved-label').innerHTML =
+    '已为您节省 <span style="font-size:10px;opacity:0.5">\u25be</span>';
+
+  // Savings breakdown detail
+  var detailRows = [
+    { label: '若全走 Sonnet', val: savedSonnetCost, color: 'var(--text-secondary)' },
+    { label: '实际花费（替代模型）', val: savedActualCost, color: 'var(--text-secondary)' },
+    { label: '节省', val: saved, color: '#2d8a56' }
+  ];
+  document.getElementById('saved-detail').innerHTML = detailRows.map(function(r) {
+    return '<div style="display:flex;justify-content:space-between;padding:2px 0;color:' + r.color + '">' +
+      '<span>' + r.label + '</span>' +
+      '<span style="font-family:var(--font-mono)">' + fmtMoney(r.val) + '</span></div>';
+  }).join('') +
+  '<div style="margin-top:6px;font-size:11px;color:var(--text-tertiary)">相较将替代模型的请求全部使用 Sonnet</div>';
 }
 
 // ═══════════════════════════════════════════
@@ -2084,8 +2630,7 @@ var cotFilteredSessions = [];
 var cotSelectedSessionId = null;
 var cotProjectSearchTimer = null;
 var cotSessionSearchTimer = null;
-
-var CUI_BASE = 'http://localhost:4000';
+var cotMscSessions = {}; // session_id → {level, name, label}
 
 function cotProjectSearchDebounced() {
   clearTimeout(cotProjectSearchTimer);
@@ -2126,6 +2671,20 @@ function cotFilterProjects() {
   renderCotProjects();
 }
 
+function cotShortPath(fullPath) {
+  // ~/work/model/steer/claude → claude
+  // ~/Library/Application/Support/CodexBar/ClaudeProbe → ClaudeProbe
+  // ~ → ~ (home)
+  if (!fullPath || fullPath === '~' || fullPath === '/') return '~';
+  var parts = fullPath.replace(/\/+$/, '').split('/');
+  return parts[parts.length - 1] || fullPath;
+}
+
+function cotPathDepth(fullPath) {
+  if (!fullPath || fullPath === '~') return 0;
+  return (fullPath.match(/\//g) || []).length;
+}
+
 function renderCotProjects() {
   var el = document.getElementById('cot-project-list');
   if (!cotFilteredProjects.length) {
@@ -2135,9 +2694,16 @@ function renderCotProjects() {
 
   el.innerHTML = cotFilteredProjects.map(function(p) {
     var isActive = p.dir_name === cotSelectedProject;
+    var shortName = cotShortPath(p.path);
+    var depth = Math.min(cotPathDepth(p.path), 3);
+    var indent = depth > 0 ? (depth * 12) : 0;
+    var icon = depth === 0 ? '🏠' : '📂';
     return '<div class="cot-project-item' + (isActive ? ' active' : '') + '"' +
-      ' onclick="cotSelectProject(\'' + escHtml(p.dir_name) + '\')">' +
-      '<span class="cot-project-path" title="' + escHtml(p.path) + '">' + escHtml(p.path) + '</span>' +
+      ' onclick="cotSelectProject(\'' + escHtml(p.dir_name) + '\')"' +
+      ' title="' + escHtml(p.path) + '"' +
+      ' style="padding-left:' + (12 + indent) + 'px">' +
+      '<span style="margin-right:6px;font-size:13px">' + icon + '</span>' +
+      '<span class="cot-project-path">' + escHtml(shortName) + '</span>' +
       '<span class="cot-project-count">' + p.session_count + '</span>' +
     '</div>';
   }).join('');
@@ -2147,6 +2713,7 @@ function renderCotProjects() {
 async function cotSelectProject(dirName) {
   cotSelectedProject = dirName;
   cotSelectedSessionId = null;
+  try { localStorage.setItem('msc-cot-project', dirName); } catch(e) {}
   renderCotProjects();
 
   // Clear session search
@@ -2156,8 +2723,14 @@ async function cotSelectProject(dirName) {
   listEl.innerHTML = '<div class="empty-state" style="padding:20px 12px">加载中...</div>';
 
   try {
-    var resp = await fetch(API_BASE + '/api/cot/sessions?project=' + encodeURIComponent(dirName));
-    cotSessions = await resp.json();
+    var [cotResp, mscResp] = await Promise.all([
+      fetch(API_BASE + '/api/cot/sessions?project=' + encodeURIComponent(dirName)),
+      fetch(API_BASE + '/sessions')
+    ]);
+    cotSessions = await cotResp.json();
+    var mscData = await mscResp.json();
+    cotMscSessions = {};
+    mscData.forEach(function(s) { cotMscSessions[s.session_id] = s; });
     cotFilteredSessions = cotSessions;
     renderCotSessions();
   } catch (e) {
@@ -2190,9 +2763,21 @@ function renderCotSessions() {
     var query = s.first_query || s.session_id.substring(0, 12);
     var timeStr = cotRelativeTime(s.last_timestamp);
     var sizeStr = cotFormatSize(s.file_size || 0);
-    return '<div class="cot-session-item' + (isActive ? ' active' : '') + '"' +
-      ' onclick="cotSelectSession(\'' + escHtml(s.session_id) + '\',\'' + escHtml(query).replace(/'/g, "\\'") + '\')">' +
-      '<div class="cot-session-query">' + escHtml(query) + '</div>' +
+    var msc = cotMscSessions[s.session_id];
+    var modelLabel = msc ? msc.label : '';
+    var sid = escHtml(s.session_id);
+    var safeQuery = escHtml(query).replace(/'/g, "\\'");
+
+    var badgeHtml = modelLabel
+      ? '<span class="model-tag" style="font-size:10px;cursor:pointer;flex-shrink:0" onclick="event.stopPropagation();cotShowSwitchPopover(this,\'' + sid + '\')" title="点击切换模型">' + escHtml(modelLabel) + '</span>'
+      : '';
+
+    return '<div class="cot-session-item' + (isActive ? ' active' : '') + '" style="position:relative"' +
+      ' onclick="cotSelectSession(\'' + sid + '\',\'' + safeQuery + '\')">' +
+      '<div style="display:flex;align-items:center;gap:6px">' +
+        '<div class="cot-session-query" style="flex:1">' + escHtml(query) + '</div>' +
+        badgeHtml +
+      '</div>' +
       '<div class="cot-session-meta">' +
         '<span class="cot-session-time">' + escHtml(timeStr) + '</span>' +
         '<span class="cot-session-size">' + escHtml(sizeStr) + '</span>' +
@@ -2201,24 +2786,169 @@ function renderCotSessions() {
   }).join('');
 }
 
-// 3. On session click — replace list view with fullscreen viewer
+// ── Model switch popover ──
+
+var cotSwitchTarget = null; // {sessionId, selectedLevel}
+
+function cotShowSwitchPopover(anchor, sessionId) {
+  cotCloseSwitchPopover();
+  var levels = getSortedLevels();
+  var msc = cotMscSessions[sessionId];
+  var currentLevel = msc ? String(msc.level) : '';
+  cotSwitchTarget = { sessionId: sessionId, selectedLevel: currentLevel };
+
+  function buildPopover() {
+    var opts = levels.map(function(lv) {
+      var isCurrent = lv[0] === currentLevel;
+      var isSelected = lv[0] === cotSwitchTarget.selectedLevel;
+      var label = (lv[1].name || '').toUpperCase();
+      var color = lv[1].color || '#888';
+      return '<div class="model-switch-option' + (isSelected ? ' active' : '') + '" onclick="cotSwitchSelect(\'' + lv[0] + '\')">' +
+        '<span class="dot" style="background:' + color + '"></span>' +
+        '<span>' + escHtml(label) + '</span>' +
+        (isCurrent ? '<span style="margin-left:auto;font-size:11px;color:var(--text-tertiary)">当前</span>' : '') +
+      '</div>';
+    }).join('');
+
+    var changed = cotSwitchTarget.selectedLevel !== currentLevel;
+    var footer = '<div style="display:flex;gap:8px;justify-content:flex-end;padding:8px 6px 4px;border-top:1px solid var(--border);margin-top:4px">' +
+      '<button onclick="cotCloseSwitchPopover()" style="padding:4px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;font-family:var(--font-sans)">取消</button>' +
+      '<button onclick="cotDoSwitch()" style="padding:4px 14px;border:1px solid var(--accent);border-radius:6px;background:' + (changed ? 'var(--accent)' : 'var(--accent-light)') + ';color:' + (changed ? '#fff' : 'var(--accent)') + ';cursor:pointer;font-size:12px;font-weight:600;font-family:var(--font-sans);opacity:' + (changed ? '1' : '0.5') + '"' + (changed ? '' : ' disabled') + '>确认</button>' +
+    '</div>';
+
+    return opts + footer;
+  }
+
+  var backdrop = document.createElement('div');
+  backdrop.className = 'model-switch-backdrop';
+  backdrop.onclick = cotCloseSwitchPopover;
+  backdrop.id = 'model-switch-backdrop';
+  document.body.appendChild(backdrop);
+
+  var popover = document.createElement('div');
+  popover.className = 'model-switch-popover';
+  popover.id = 'model-switch-popover';
+  popover.innerHTML = buildPopover();
+
+  var rect = anchor.getBoundingClientRect();
+  popover.style.position = 'fixed';
+  popover.style.right = (window.innerWidth - rect.right) + 'px';
+  popover.style.top = (rect.bottom + 4) + 'px';
+  document.body.appendChild(popover);
+}
+
+function cotSwitchSelect(level) {
+  if (!cotSwitchTarget) return;
+  cotSwitchTarget.selectedLevel = level;
+  // Re-render popover content
+  var popover = document.getElementById('model-switch-popover');
+  if (!popover) return;
+  var anchor = popover; // reuse position
+  var levels = getSortedLevels();
+  var msc = cotMscSessions[cotSwitchTarget.sessionId];
+  var currentLevel = msc ? String(msc.level) : '';
+
+  var opts = levels.map(function(lv) {
+    var isCurrent = lv[0] === currentLevel;
+    var isSelected = lv[0] === cotSwitchTarget.selectedLevel;
+    var label = (lv[1].name || '').toUpperCase();
+    var color = lv[1].color || '#888';
+    return '<div class="model-switch-option' + (isSelected ? ' active' : '') + '" onclick="cotSwitchSelect(\'' + lv[0] + '\')">' +
+      '<span class="dot" style="background:' + color + '"></span>' +
+      '<span>' + escHtml(label) + '</span>' +
+      (isCurrent ? '<span style="margin-left:auto;font-size:11px;color:var(--text-tertiary)">当前</span>' : '') +
+    '</div>';
+  }).join('');
+
+  var changed = cotSwitchTarget.selectedLevel !== currentLevel;
+  var footer = '<div style="display:flex;gap:8px;justify-content:flex-end;padding:8px 6px 4px;border-top:1px solid var(--border);margin-top:4px">' +
+    '<button onclick="cotCloseSwitchPopover()" style="padding:4px 14px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text-secondary);cursor:pointer;font-size:12px;font-family:var(--font-sans)">取消</button>' +
+    '<button onclick="cotDoSwitch()" style="padding:4px 14px;border:1px solid var(--accent);border-radius:6px;background:' + (changed ? 'var(--accent)' : 'var(--accent-light)') + ';color:' + (changed ? '#fff' : 'var(--accent)') + ';cursor:pointer;font-size:12px;font-weight:600;font-family:var(--font-sans);opacity:' + (changed ? '1' : '0.5') + '"' + (changed ? '' : ' disabled') + '>确认</button>' +
+  '</div>';
+
+  popover.innerHTML = opts + footer;
+}
+
+function cotCloseSwitchPopover() {
+  cotSwitchTarget = null;
+  var b = document.getElementById('model-switch-backdrop');
+  var p = document.getElementById('model-switch-popover');
+  if (b) b.remove();
+  if (p) p.remove();
+}
+
+async function cotDoSwitch() {
+  if (!cotSwitchTarget) return;
+  var sid = cotSwitchTarget.sessionId;
+  var level = cotSwitchTarget.selectedLevel;
+  cotCloseSwitchPopover();
+  try {
+    await fetch(API_BASE + '/think-level?session=' + encodeURIComponent(sid) + '&level=' + level);
+    var mscResp = await fetch(API_BASE + '/sessions');
+    var mscData = await mscResp.json();
+    cotMscSessions = {};
+    mscData.forEach(function(s) { cotMscSessions[s.session_id] = s; });
+    showToast('已切换');
+  } catch(e) {
+    showToast('切换失败', 'error');
+  }
+  renderCotSessions();
+  cotViewerUpdateModel();
+}
+
+// 3. On session click — open CUI viewer
 function cotSelectSession(sessionId, title) {
   cotSelectedSessionId = sessionId;
   renderCotSessions();
 
   document.getElementById('cot-list-view').style.display = 'none';
-  document.getElementById('cot-viewer-view').style.display = 'block';
-  document.getElementById('cot-viewer-title').textContent = title || sessionId.substring(0, 8);
-  document.getElementById('cot-iframe').src = CUI_BASE + '/c/' + encodeURIComponent(sessionId) + '?embed&skip-auth&theme=light';
+  document.getElementById('cot-viewer-view').style.display = 'flex';
+  document.getElementById('cot-cui-frame').src = '/cot/c/' + encodeURIComponent(sessionId) + '?embed&skip-auth';
+
+  // Show model badge in viewer
+  cotViewerUpdateModel();
 }
+
+function cotViewerUpdateModel() {
+  var msc = cotMscSessions[cotSelectedSessionId];
+  var badge = document.getElementById('cot-viewer-model-badge');
+  if (msc && msc.label) {
+    badge.textContent = msc.label;
+    badge.style.display = '';
+  } else {
+    badge.style.display = 'none';
+  }
+  document.getElementById('cot-viewer-switch').style.display = 'none';
+}
+
 
 // Back from viewer — return to two-column list view
 function cotGoBack() {
   document.getElementById('cot-viewer-view').style.display = 'none';
   document.getElementById('cot-list-view').style.display = 'block';
-  document.getElementById('cot-iframe').src = '';
+  document.getElementById('cot-cui-frame').src = '';
   cotSelectedSessionId = null;
   renderCotSessions();
+}
+
+// Listen for CUI back button postMessage
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.type === 'cot-go-back') {
+    cotGoBack();
+  }
+});
+
+// Manual refresh sessions
+async function cotRefreshSessions() {
+  if (!cotSelectedProject) return;
+  var btn = document.getElementById('cot-refresh-btn');
+  if (btn) { btn.style.animation = 'spin 0.6s linear'; }
+  try {
+    var resp = await fetch(API_BASE + '/api/cot/sessions?project=' + encodeURIComponent(cotSelectedProject));
+    cotSessions = await resp.json();
+    cotFilterSessions();
+  } catch (e) {}
+  if (btn) { setTimeout(function() { btn.style.animation = ''; }, 600); }
 }
 
 function cotRelativeTime(ts) {
@@ -2243,19 +2973,13 @@ function cotFormatSize(bytes) {
   return (bytes / 1024 / 1024).toFixed(1) + 'MB';
 }
 
-// Auto-refresh session list every 10 seconds (if a project is selected)
+// Auto-refresh session list every 60 seconds (if a project is selected)
 setInterval(function() {
-  if (document.getElementById('tab-cot').classList.contains('active') && cotSelectedProject) {
-    // Re-fetch sessions silently
-    fetch(API_BASE + '/api/cot/sessions?project=' + encodeURIComponent(cotSelectedProject))
-      .then(function(r) { return r.json(); })
-      .then(function(data) {
-        cotSessions = data;
-        cotFilterSessions();
-      })
-      .catch(function() {});
+  if (document.getElementById('tab-cot').classList.contains('active') && cotSelectedProject && !cotSelectedSessionId) {
+    cotRefreshSessions();
   }
-}, 10000);
+}, 60000);
+
 </script>
 </body>
 </html>

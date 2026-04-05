@@ -2,6 +2,9 @@
 # Hook: user-prompt-submit — show current msc level before each prompt
 set -euo pipefail
 
+# Only activate when launched via cr (MSC_ENABLED=1)
+[[ "${MSC_ENABLED:-}" != "1" ]] && exit 0
+
 if [[ -z "${CR_SESSION:-}" ]]; then
   exit 0
 fi

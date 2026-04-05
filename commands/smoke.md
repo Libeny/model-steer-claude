@@ -1,7 +1,8 @@
 切换到最低等级模型（省钱模式）。
 
 ```bash
-curl --noproxy '*' -s "http://127.0.0.1:3457/think-level?session=$CR_SESSION&level=1"
+curl --noproxy '*' -s "http://127.0.0.1:3457/use-min"
 ```
 
-执行上面的命令，然后告诉用户已切换。不要解释原理。
+- 如果返回 `{"error":...}` 或连接失败，告诉用户：此命令仅在 cr 模式下可用，请用 `cr` 启动。
+- 否则告诉用户已切换。不要解释原理。

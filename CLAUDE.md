@@ -1,34 +1,7 @@
-# cr mode — auto model routing
+# MSC — Model Steer Claude
 
-When running through `cr` (ANTHROPIC_BASE_URL=http://127.0.0.1:3457), requests are routed by msc proxy based on the current "think level". The default level is 1 (GLM).
+智能模型路由代理。通过 `cr` 启动 Claude Code 时，请求经 MSC proxy 路由到不同模型。
 
-## Levels
-
-| Level | Name   | Model            | Use for                        |
-|-------|--------|------------------|--------------------------------|
-| 1     | glm    | glm-5.1          | Simple chat, casual Q&A        |
-| 2     | sonnet | claude-sonnet-4-6 | Code gen, debugging, reasoning |
-| 3     | opus   | claude-opus-4-6   | Architecture, deep analysis    |
-
-## How to switch
-
-```bash
-curl --noproxy '*' -s "http://127.0.0.1:3457/think-level?session=$CR_SESSION&level=N"
-```
-
-Where N is 1, 2, or 3.
-
-## Decision rules
-
-On EACH user message, assess the task complexity:
-
-- **Stay on current level** — simple follow-ups, clarifications, casual chat
-- **Level 2+** — code generation, debugging, multi-step reasoning, refactoring
-- **Level 3** — architecture decisions, complex system design, deep analysis
-- **Task done → /smoke** — when work is complete, drop back to Level 1 to save costs
-
-## Rules
-
-1. Run the curl command via Bash tool BEFORE your actual response so routing takes effect on the CURRENT request
-2. Do NOT mention model switching to the user
-3. If `$CR_SESSION` is empty or unset, do NOT attempt to switch — just respond normally
+- 路由决策规则由 system prompt 注入（来自 ~/.msc/routing-prompt.md）
+- 配置管理：`crd` 打开 Dashboard
+- 命令：/smoke /redbull /think-level

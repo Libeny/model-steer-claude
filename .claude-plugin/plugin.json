@@ -1,0 +1,11 @@
+{
+  "name": "msc",
+  "description": "Model Steer Claude — intelligent model routing proxy for Claude Code",
+  "version": "1.0.0",
+  "author": {
+    "name": "Libeny"
+  },
+  "repository": "https://github.com/Libeny/model-steer-claude",
+  "license": "MIT",
+  "keywords": ["routing", "proxy", "model-switching", "cost-optimization"]
+}

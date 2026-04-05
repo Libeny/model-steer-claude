@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections import deque
 from functools import lru_cache
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
@@ -157,7 +158,7 @@ def mask_key(key):
 
 
 def build_route_levels(cfg):
-    """Build {int_level: {name, provider, model, label}} from config."""
+    """Build {int_level: {name, provider, model, label, context}} from config."""
     levels = {}
     for k, v in cfg["levels"].items():
         lvl = int(k)
@@ -166,8 +167,41 @@ def build_route_levels(cfg):
             "provider": v["provider"],
             "model": v["model"],
             "label": v["name"].upper(),
+            "context": v.get("context", ""),
         }
     return levels
+
+
+def generate_routing_prompt(cfg):
+    """Generate routing system prompt from config levels."""
+    lines = [
+        "# Model Routing",
+        "",
+        "You are behind an intelligent routing proxy. On EACH user message, assess the intent and switch to the appropriate level BEFORE responding.",
+        "",
+        "## Levels",
+        "",
+    ]
+    for k in sorted(cfg["levels"].keys(), key=int):
+        v = cfg["levels"][k]
+        ctx = v.get("context", "")
+        lines.append(f"- **Level {k} ({v['name']})**: {ctx}")
+    lines += [
+        "",
+        "## How to switch",
+        "",
+        '```bash',
+        'curl --noproxy \'*\' -s "http://127.0.0.1:3457/think-level?level=N"',
+        '```',
+        "",
+        "## Rules",
+        "",
+        "1. Run the curl via Bash tool BEFORE your actual response",
+        "2. Do NOT mention model switching to the user",
+        "3. Always pick the LOWEST level that fits the task",
+        "4. When task is done, drop back to Level 1",
+    ]
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +226,8 @@ def init_db():
             session_id TEXT,
             level INTEGER,
             provider TEXT,
+            model_name TEXT DEFAULT '',
+            label TEXT DEFAULT '',
             input_tokens INTEGER DEFAULT 0,
             output_tokens INTEGER DEFAULT 0,
             cache_read_tokens INTEGER DEFAULT 0,
@@ -212,6 +248,15 @@ def init_db():
         )
     """)
     conn.commit()
+    # Migrations: add columns if they don't exist
+    try:
+        conn.execute("ALTER TABLE usage ADD COLUMN model_name TEXT DEFAULT ''")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE usage ADD COLUMN label TEXT DEFAULT ''")
+    except Exception:
+        pass
     conn.close()
 
 
@@ -225,18 +270,35 @@ def db_connect():
 # Session Indexer (CoT)
 # ---------------------------------------------------------------------------
 def _dir_to_project_path(dirname):
-    """Convert directory name like '-Users-limuyu-work-muyu' to '~/work/muyu'."""
-    # Remove leading dash, replace dashes with /
-    path = dirname.lstrip("-").replace("-", "/")
-    # Replace /Users/<user>/ with ~/
+    """Convert directory name like '-Users-limuyu-work-model-steer-claude' to '~/work/model-steer-claude'.
+
+    Claude Code encodes paths by replacing / with -.  Since - also appears in
+    directory names, we greedily match against the filesystem from left to right,
+    trying the longest segment first at each level.
+    """
+    raw = dirname.lstrip("-")
+    parts = raw.split("-")
+
+    resolved = []
+    i = 0
+    while i < len(parts):
+        found = False
+        for j in range(len(parts), i, -1):
+            candidate = "-".join(parts[i:j])
+            test_path = "/" + "/".join(resolved + [candidate])
+            if Path(test_path).exists():
+                resolved.append(candidate)
+                i = j
+                found = True
+                break
+        if not found:
+            resolved.append(parts[i])
+            i += 1
+
+    path = "/" + "/".join(resolved)
     home = str(Path.home())
-    home_prefix = home.lstrip("/")  # e.g. Users/limuyu
-    if path.startswith(home_prefix):
-        path = "~" + path[len(home_prefix):]
-    elif path.startswith("/"):
-        pass
-    else:
-        path = "/" + path
+    if path.startswith(home):
+        path = "~" + path[len(home):]
     return path
 
 
@@ -253,8 +315,23 @@ def _find_session_jsonl(session_id):
     return None
 
 
+def _is_command_message(text):
+    """Check if text is a CLI command/system message, not a real user query."""
+    if not text:
+        return True
+    t = text.strip()
+    return (
+        t.startswith("<command-") or
+        t.startswith("<local-command-") or
+        t.startswith("<system-reminder>") or
+        t.startswith("Base directory for this skill") or
+        t.startswith("/") or  # slash commands like /clear, /smoke
+        not t  # empty
+    )
+
+
 def _extract_first_query(filepath):
-    """Read file to find first user message and extract query text."""
+    """Read file to find first real user message and extract query text."""
     try:
         with open(filepath, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
@@ -266,15 +343,20 @@ def _extract_first_query(filepath):
                     if obj.get("type") == "user":
                         msg = obj.get("message", {})
                         content = msg.get("content", "")
+                        text = ""
                         if isinstance(content, str):
-                            return content[:500]
+                            text = content
                         elif isinstance(content, list):
                             for block in content:
                                 if isinstance(block, dict) and block.get("type") == "text":
-                                    return block.get("text", "")[:500]
+                                    text = block.get("text", "")
+                                    break
                                 elif isinstance(block, str):
-                                    return block[:500]
-                        return str(content)[:500]
+                                    text = block
+                                    break
+                        if _is_command_message(text):
+                            continue  # skip command messages, find next user msg
+                        return text[:500]
                 except (json.JSONDecodeError, KeyError):
                     continue
     except Exception:
@@ -370,47 +452,11 @@ def _index_all_sessions():
 
 
 def _periodic_index():
-    """Periodically check for changed jsonl files and re-index matching sessions."""
+    """Periodically re-index all registered sessions."""
     while True:
         time.sleep(60)
         try:
-            # Find recently modified jsonl files
-            result = subprocess.run(
-                ["find", str(CLAUDE_PROJECTS_DIR), "-name", "*.jsonl", "-mmin", "-1.5"],
-                capture_output=True, text=True, timeout=10
-            )
-            if not result.stdout.strip():
-                continue
-
-            changed_files = result.stdout.strip().split("\n")
-            # Extract session IDs from filenames
-            changed_sids = set()
-            for fp in changed_files:
-                fname = os.path.basename(fp)
-                if fname.endswith(".jsonl"):
-                    sid = fname[:-6]  # remove .jsonl
-                    changed_sids.add(sid)
-
-            if not changed_sids:
-                continue
-
-            # Only index sessions that exist in the sessions table
-            conn = db_connect()
-            try:
-                rows = conn.execute("SELECT session_id FROM sessions").fetchall()
-                registered = {r["session_id"] for r in rows}
-            finally:
-                conn.close()
-
-            to_update = changed_sids & registered
-            for sid in to_update:
-                try:
-                    _index_session(sid)
-                except Exception as e:
-                    print(f"[msc] CoT re-index error for {sid[:8]}…: {e}", flush=True)
-
-            if to_update:
-                print(f"[msc] CoT re-indexed {len(to_update)} session(s)", flush=True)
+            _index_all_sessions()
         except Exception as e:
             print(f"[msc] CoT periodic index error: {e}", flush=True)
 
@@ -484,6 +530,28 @@ def read_jsonl_head(filepath, offset=0, limit=20):
         return []
 
 
+def read_jsonl_before(filepath, before_line, limit=20):
+    """Read up to limit messages with line_number < before_line (last N before that line)."""
+    buf = deque(maxlen=limit)
+    try:
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            for line_num, line in enumerate(f, 1):
+                if line_num >= before_line:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                    obj["_line_number"] = line_num
+                    buf.append(obj)
+                except (json.JSONDecodeError, ValueError):
+                    pass
+        return list(buf)
+    except Exception:
+        return []
+
+
 @lru_cache(maxsize=64)
 def _count_lines_cached(filepath, file_size):
     """Count total lines in file (cached by path+size)."""
@@ -518,6 +586,225 @@ def count_messages_in_file(filepath):
 
 
 # ---------------------------------------------------------------------------
+# Health Check
+# ---------------------------------------------------------------------------
+CLAUDE_HOME = Path.home() / ".claude"
+USAGE_CACHE = CLAUDE_HOME / ".usage-cache.json"
+HEALTH_INTERVAL = 1800  # 30 minutes
+
+
+def _read_claude_credentials():
+    """Read OAuth credentials from macOS keychain."""
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+            capture_output=True, text=True, timeout=5
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return json.loads(result.stdout.strip())
+    except Exception:
+        pass
+    return None
+
+
+def _check_anthropic_health():
+    """Check Anthropic availability via OAuth token + usage API."""
+    import httpx
+    result = {"status": "unknown", "error": "", "details": {}}
+
+    # 1. Read OAuth token from keychain
+    creds = _read_claude_credentials()
+    if not creds:
+        result["status"] = "unknown"
+        result["error"] = "无法读取 Claude 凭据"
+        return result
+
+    oauth = creds.get("claudeAiOauth", {})
+    token = oauth.get("accessToken", "")
+    if not token:
+        result["status"] = "fail"
+        result["error"] = "OAuth Token 不存在，请先 claude login"
+        return result
+
+    # 2. Check token expiry
+    expires_at = oauth.get("expiresAt", 0)
+    now_ms = int(time.time() * 1000)
+    if expires_at and now_ms > expires_at:
+        result["status"] = "fail"
+        result["error"] = "OAuth Token 已过期，请重新登录"
+        return result
+
+    remaining_hours = (expires_at - now_ms) / 1000 / 3600 if expires_at else 0
+    result["details"]["token_expires_in_hours"] = round(remaining_hours, 1)
+    result["details"]["subscription"] = oauth.get("subscriptionType", "unknown")
+
+    # 3. Call Anthropic usage API directly
+    try:
+        proxy_url = Handler.config.get("proxy", "") if Handler.config else ""
+        client_kwargs = {"timeout": 10}
+        if proxy_url:
+            client_kwargs["proxy"] = proxy_url
+
+        with httpx.Client(**client_kwargs) as client:
+            resp = client.get(
+                "https://api.anthropic.com/api/oauth/usage",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "anthropic-beta": "oauth-2025-04-20",
+                },
+            )
+
+        if resp.status_code == 401:
+            result["status"] = "fail"
+            result["error"] = "认证失败，请重新 claude login"
+            return result
+
+        if resp.status_code != 200:
+            result["status"] = "unknown"
+            result["error"] = f"用量 API 返回 {resp.status_code}"
+            return result
+
+        data = resp.json()
+        five_hour = int(data.get("five_hour", {}).get("utilization", 0))
+        seven_day = int(data.get("seven_day", {}).get("utilization", 0))
+        seven_day_sonnet_raw = data.get("seven_day_sonnet") or {}
+        seven_day_sonnet = int(seven_day_sonnet_raw.get("utilization", 0)) if seven_day_sonnet_raw else None
+
+        result["details"]["five_hour_usage"] = five_hour
+        result["details"]["seven_day_usage"] = seven_day
+        result["details"]["five_hour_reset"] = data.get("five_hour", {}).get("resets_at", "")
+        result["details"]["seven_day_reset"] = data.get("seven_day", {}).get("resets_at", "")
+        if seven_day_sonnet is not None:
+            result["details"]["seven_day_sonnet_usage"] = seven_day_sonnet
+            result["details"]["seven_day_sonnet_reset"] = seven_day_sonnet_raw.get("resets_at", "")
+
+        # Also update the local cache file for statusline-command.sh
+        try:
+            cache_data = {
+                "timestamp": int(time.time()),
+                "five_hour": str(five_hour),
+                "seven_day": str(seven_day),
+                "five_hour_reset_iso": result["details"]["five_hour_reset"],
+                "seven_day_reset_iso": result["details"]["seven_day_reset"],
+            }
+            if seven_day_sonnet is not None:
+                cache_data["seven_day_sonnet"] = str(seven_day_sonnet)
+                cache_data["seven_day_sonnet_reset_iso"] = result["details"]["seven_day_sonnet_reset"]
+            USAGE_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            with open(USAGE_CACHE, "w") as f:
+                json.dump(cache_data, f)
+        except Exception:
+            pass
+
+        if five_hour >= 100 and seven_day >= 100:
+            result["status"] = "fail"
+            result["error"] = f"5h({five_hour}%) 和 7d({seven_day}%) 额度均已用完"
+        elif five_hour >= 100:
+            result["status"] = "warn"
+            result["error"] = f"5h 额度已用完 ({five_hour}%)"
+        elif seven_day >= 100:
+            result["status"] = "warn"
+            result["error"] = f"7d 额度已用完 ({seven_day}%)"
+        elif seven_day_sonnet is not None and seven_day_sonnet >= 100:
+            result["status"] = "warn"
+            result["error"] = f"Sonnet 7d 额度已用完 ({seven_day_sonnet}%)"
+        else:
+            result["status"] = "ok"
+
+    except Exception as e:
+        result["status"] = "unknown"
+        result["error"] = f"用量检查失败: {str(e)[:80]}"
+
+    return result
+
+
+def _check_custom_api_health(provider_name, provider_cfg, model, clients):
+    """Check custom API (GLM etc) by sending a minimal request."""
+    result = {"status": "unknown", "error": "", "details": {}}
+    url = provider_cfg.get("url", "")
+    key = provider_cfg.get("key", "")
+    if not url or not key:
+        result["status"] = "fail"
+        result["error"] = "缺少 API 地址或 Key"
+        return result
+
+    try:
+        client = clients.get(provider_name)
+        if not client:
+            result["status"] = "fail"
+            result["error"] = "HTTP client 未初始化"
+            return result
+
+        headers = {
+            "content-type": "application/json",
+            "x-api-key": key,
+            "authorization": f"Bearer {key}",
+            "anthropic-version": "2023-06-01",
+        }
+        body = json.dumps({
+            "model": model,
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "ping"}],
+        })
+        resp = client.post(url, headers=headers, content=body, timeout=10)
+        if resp.status_code == 200:
+            result["status"] = "ok"
+        else:
+            result["status"] = "fail"
+            try:
+                err = resp.json().get("error", {}).get("message", resp.text[:100])
+            except Exception:
+                err = f"HTTP {resp.status_code}"
+            result["error"] = str(err)
+    except Exception as e:
+        result["status"] = "fail"
+        result["error"] = str(e)[:100]
+
+    return result
+
+
+def run_health_check(config, route_levels, clients):
+    """Run health check on all configured models."""
+    import datetime
+    results = {}
+    for level_str, level_info in sorted(route_levels.items()):
+        level_int = int(level_str) if isinstance(level_str, str) else level_str
+        provider_name = level_info.get("provider", "")
+        model = level_info.get("model", "")
+        label = level_info.get("label", "")
+
+        if provider_name == "anthropic" or level_info.get("passthrough_auth"):
+            check = _check_anthropic_health()
+        else:
+            provider_cfg = config.get("providers", {}).get(provider_name, {})
+            check = _check_custom_api_health(provider_name, provider_cfg, model, clients)
+
+        check["checked_at"] = datetime.datetime.now().isoformat()
+        check["model"] = model
+        check["label"] = label
+        check["provider"] = provider_name
+        results[level_int] = check
+        status_icon = {"ok": "✓", "fail": "✗", "warn": "⚠", "unknown": "?"}.get(check["status"], "?")
+        print(f"[msc] Health {status_icon} Level {level_int} ({label}): {check['status']} {check.get('error','')}", flush=True)
+
+    return results
+
+
+def _health_check_loop():
+    """Background thread: run health check every HEALTH_INTERVAL seconds."""
+    time.sleep(10)  # initial delay
+    while True:
+        try:
+            if Handler.config and Handler.route_levels and Handler.clients:
+                Handler._model_health = run_health_check(
+                    Handler.config, Handler.route_levels, Handler.clients
+                )
+        except Exception as e:
+            print(f"[msc] Health check error: {e}", flush=True)
+        time.sleep(HEALTH_INTERVAL)
+
+
+# ---------------------------------------------------------------------------
 # Fallback
 # ---------------------------------------------------------------------------
 def get_fallback_order(current_level, max_level):
@@ -538,6 +825,8 @@ class Handler(BaseHTTPRequestHandler):
     route_levels = None
     clients = None  # {provider_name: httpx.Client}
     active_session = None
+    _model_health = {}  # {level_int: {"status": "ok"|"fail"|"unknown", "error": "", "checked_at": ""}}
+    _health_check_running = False
 
     def log_message(self, fmt, *args):
         pass
@@ -548,7 +837,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         params = parse_qs(parsed.query)
-        sid = params.get("session", [""])[0]
+        sid = params.get("session", [""])[0] or Handler.active_session or ""
 
         if path == "/":
             self._json({"status": "ok"})
@@ -560,11 +849,22 @@ class Handler(BaseHTTPRequestHandler):
             level_str = params.get("level", [""])[0]
             self._handle_think_level(sid, level_str)
 
+        elif path == "/use-min" and sid:
+            min_level = str(min(int(k) for k in self.route_levels.keys()))
+            self._handle_think_level(sid, min_level)
+
+        elif path == "/use-max" and sid:
+            max_level = str(max(int(k) for k in self.route_levels.keys()))
+            self._handle_think_level(sid, max_level)
+
         elif path == "/status" and sid:
             self._handle_status(sid)
 
         elif path == "/config":
             self._handle_config_get(params)
+
+        elif path == "/routing-prompt":
+            self._json({"prompt": generate_routing_prompt(self.config)})
 
         elif path == "/sessions":
             self._handle_sessions()
@@ -589,6 +889,40 @@ class Handler(BaseHTTPRequestHandler):
             cot_sid = path[len("/api/cot/session/"):-len("/info")]
             self._handle_cot_info(cot_sid)
 
+        elif path == "/health-check":
+            # Manual trigger health check
+            if Handler._health_check_running:
+                self._json({"status": "already running"})
+            else:
+                Handler._health_check_running = True
+                try:
+                    Handler._model_health = run_health_check(
+                        self.config, self.route_levels, self.clients
+                    )
+                finally:
+                    Handler._health_check_running = False
+                self._json(Handler._model_health)
+
+        elif path == "/health-status":
+            self._json(Handler._model_health)
+
+        elif path == "/api/claude-account":
+            self._handle_claude_account()
+
+        # CUI-compatible API endpoints
+        elif path == "/api/system/auth-status":
+            self._json({"authRequired": False})
+
+        elif path == "/api/conversations":
+            self._handle_cui_conversations(params)
+
+        elif path.startswith("/api/conversations/"):
+            cui_sid = path[len("/api/conversations/"):]
+            self._handle_cui_conversation_details(cui_sid)
+
+        elif path == "/api/subscriptions/subscribe" or path == "/api/subscriptions/unsubscribe":
+            self._json({"success": True})
+
         else:
             self._json({"status": "ok"})
 
@@ -609,6 +943,8 @@ class Handler(BaseHTTPRequestHandler):
             conn.close()
         level_info = self.route_levels.get(level, {})
         print(f"[msc] Register: {sid[:8]}… → Level {level} ({level_info.get('label', '?')})", flush=True)
+        # Index session immediately (async, don't block response)
+        threading.Thread(target=lambda: _index_session(sid), daemon=True).start()
         self._json({"session_id": sid, "level": level, "name": level_info.get("name", ""), "label": level_info.get("label", "")})
 
     def _handle_think_level(self, sid, level_str):
@@ -657,10 +993,17 @@ class Handler(BaseHTTPRequestHandler):
             for row in rows:
                 sid, level, created, updated = row
                 usage_rows = conn.execute(
-                    "SELECT provider, SUM(input_tokens) as inp, SUM(output_tokens) as out FROM usage WHERE session_id = ? GROUP BY provider",
+                    "SELECT provider, model_name, label, "
+                    "SUM(input_tokens) as inp, SUM(output_tokens) as out, "
+                    "SUM(cache_read_tokens) as cache_read, SUM(cache_create_tokens) as cache_create "
+                    "FROM usage WHERE session_id = ? GROUP BY provider, model_name",
                     (sid,),
                 ).fetchall()
-                usage = [{"provider": u[0], "input_tokens": u[1], "output_tokens": u[2]} for u in usage_rows]
+                usage = [{
+                    "provider": u[0], "model_name": u[1] or "", "label": u[2] or u[0],
+                    "input_tokens": u[3], "output_tokens": u[4],
+                    "cache_read_tokens": u[5] or 0, "cache_create_tokens": u[6] or 0,
+                } for u in usage_rows]
                 level_info = Handler.route_levels.get(level, {})
                 result.append({
                     "session_id": sid, "level": level,
@@ -712,9 +1055,12 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         if not file_path.exists():
-            self.send_response(404)
-            self.end_headers()
-            return
+            # SPA fallback: serve index.html for any non-file path (e.g. /cot/c/{id})
+            file_path = cot_dir / "index.html"
+            if not file_path.exists():
+                self.send_response(404)
+                self.end_headers()
+                return
         mime, _ = mimetypes.guess_type(str(file_path))
         self.send_response(200)
         self.send_header("Content-Type", mime or "application/octet-stream")
@@ -888,8 +1234,11 @@ class Handler(BaseHTTPRequestHandler):
         limit = int(params.get("limit", ["20"])[0])
         offset = int(params.get("offset", ["0"])[0])
         direction = params.get("direction", ["tail"])[0]
+        before_line = params.get("before_line", [None])[0]
 
-        if direction == "tail":
+        if before_line:
+            messages = read_jsonl_before(filepath, int(before_line), limit=limit)
+        elif direction == "tail":
             messages = read_jsonl_tail(filepath, limit=limit)
         else:
             messages = read_jsonl_head(filepath, offset=offset, limit=limit)
@@ -942,6 +1291,145 @@ class Handler(BaseHTTPRequestHandler):
             "message_count": msg_count,
         })
 
+    def _handle_claude_account(self):
+        """Return Claude account info + usage for dashboard display."""
+        result = {"logged_in": False}
+        creds = _read_claude_credentials()
+        if not creds:
+            self._json(result)
+            return
+        oauth = creds.get("claudeAiOauth", {})
+        token = oauth.get("accessToken", "")
+        if not token:
+            self._json(result)
+            return
+
+        expires_at = oauth.get("expiresAt", 0)
+        now_ms = int(time.time() * 1000)
+        result["logged_in"] = True
+        result["subscription"] = oauth.get("subscriptionType", "unknown")
+        result["token_expires_in_hours"] = round((expires_at - now_ms) / 1000 / 3600, 1) if expires_at else 0
+        result["token_expired"] = now_ms > expires_at if expires_at else False
+
+        # Get email from claude auth status
+        try:
+            out = subprocess.run(
+                ["claude", "auth", "status"], capture_output=True, text=True, timeout=5
+            )
+            if out.returncode == 0:
+                import re as _re
+                info = json.loads(out.stdout)
+                result["email"] = info.get("email", "")
+                result["org_name"] = info.get("orgName", "")
+        except Exception:
+            pass
+
+        # Get usage from health check cache
+        for level_int, health in Handler._model_health.items():
+            if health.get("provider") == "anthropic" and health.get("details"):
+                result["usage"] = health["details"]
+                break
+
+        self._json(result)
+
+    # ---- CUI-compatible API endpoints ----
+
+    def _handle_cui_conversations(self, params):
+        """Return session list in CUI-compatible format."""
+        conn = db_connect()
+        try:
+            rows = conn.execute(
+                "SELECT session_id, project_path, first_query, last_timestamp FROM session_index ORDER BY last_timestamp DESC LIMIT 200"
+            ).fetchall()
+        finally:
+            conn.close()
+        conversations = []
+        for r in rows:
+            conversations.append({
+                "sessionId": r["session_id"],
+                "summary": r["first_query"] or "",
+                "projectPath": r["project_path"] or "",
+                "createdAt": r["last_timestamp"] or "",
+                "updatedAt": r["last_timestamp"] or "",
+                "status": "completed",
+                "streamingId": None,
+                "sessionInfo": {
+                    "custom_name": "",
+                    "archived": False,
+                    "pinned": False,
+                },
+                "toolMetrics": None,
+            })
+        self._json({"conversations": conversations, "total": len(conversations)})
+
+    def _handle_cui_conversation_details(self, session_id):
+        """Read full JSONL and return CUI-compatible ConversationDetailsResponse."""
+        conn = db_connect()
+        try:
+            row = conn.execute(
+                "SELECT file_path, project_path, first_query FROM session_index WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+
+        if not row or not row["file_path"]:
+            self._json({"error": "session not found"}, status=404)
+            return
+
+        filepath = row["file_path"]
+        if not os.path.exists(filepath):
+            self._json({"error": "jsonl file not found"}, status=404)
+            return
+
+        # Parse all JSONL entries (CUI needs raw message objects)
+        messages = []
+        model = ""
+        try:
+            with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except (json.JSONDecodeError, ValueError):
+                        continue
+                    etype = entry.get("type", "")
+                    if etype not in ("user", "assistant"):
+                        continue
+                    msg = entry.get("message", {})
+                    if not msg:
+                        continue
+                    # Track model from assistant messages
+                    if etype == "assistant" and isinstance(msg, dict):
+                        m = msg.get("model", "")
+                        if m:
+                            model = m
+                    messages.append({
+                        "uuid": entry.get("uuid", ""),
+                        "type": etype,
+                        "message": msg,
+                        "timestamp": entry.get("timestamp", ""),
+                        "sessionId": session_id,
+                        "parentUuid": entry.get("parentUuid"),
+                        "isSidechain": entry.get("isSidechain", False),
+                        "cwd": entry.get("cwd", ""),
+                    })
+        except Exception:
+            self._json({"error": "failed to read session"}, status=500)
+            return
+
+        self._json({
+            "messages": messages,
+            "summary": row["first_query"] or "",
+            "projectPath": row["project_path"] or "",
+            "metadata": {
+                "totalDuration": 0,
+                "model": model,
+            },
+        })
+
     # ---- POST endpoints ----
 
     def do_POST(self):
@@ -955,6 +1443,11 @@ class Handler(BaseHTTPRequestHandler):
             self._handle_config_post(raw)
             return
 
+        # CUI subscription endpoints (no-op stubs)
+        if path.startswith("/api/subscriptions/"):
+            self._json({"success": True})
+            return
+
         if not path.startswith("/v1/messages"):
             self._json({"error": "not found"}, status=404)
             return
@@ -964,11 +1457,21 @@ class Handler(BaseHTTPRequestHandler):
     def _handle_config_post(self, raw):
         try:
             new_cfg = json.loads(raw)
+            # Save history before overwriting
+            history_path = Path(os.path.expanduser("~/.msc/config-history.jsonl"))
+            try:
+                import datetime
+                entry = {"timestamp": datetime.datetime.now().isoformat(), "config": new_cfg}
+                with open(history_path, "a") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
             save_config(new_cfg)
             # Reload
             Handler.config = load_config()
             Handler.route_levels = build_route_levels(Handler.config)
             _rebuild_clients()
+            write_routing_prompt(Handler.config)
             self._json({"status": "config updated"})
             print("[msc] Config updated and reloaded", flush=True)
         except Exception as e:
@@ -992,7 +1495,11 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
 
         max_level = max(self.route_levels.keys())
-        fallback_order = get_fallback_order(level, max_level)
+        # If session's level no longer exists, clamp to nearest valid level
+        if level not in self.route_levels:
+            valid = sorted(self.route_levels.keys())
+            level = min(valid, key=lambda l: abs(l - level))
+        fallback_order = [l for l in get_fallback_order(level, max_level) if l in self.route_levels]
         retry_cfg = self.config.get("retry", {"max_attempts": 3, "interval_seconds": 2})
 
         last_error = None
@@ -1040,10 +1547,8 @@ class Handler(BaseHTTPRequestHandler):
             # Anthropic: passthrough all headers (OAuth compatible), fix signatures
             headers = {k: v for k, v in self.headers.items()
                        if k.lower() not in ("host", "content-length")}
-            has_xapi = bool(headers.get("x-api-key"))
-            has_auth = bool(headers.get("authorization"))
-            auth_preview = headers.get("authorization", "")[:30] if headers.get("authorization") else "none"
-            print(f"[msc] Anthropic auth: x-api-key={has_xapi} authorization={has_auth} preview={auth_preview}", flush=True)
+            # Override model to match the configured level
+            req_body["model"] = level_info["model"]
             n = fix_signatures(req_body.get("messages", []))
             if n:
                 print(f"[msc] Fixed {n} signature(s)", flush=True)
@@ -1097,19 +1602,37 @@ class Handler(BaseHTTPRequestHandler):
         self._track_usage_from_body(resp_body, sid, level, provider_name)
 
     def _track_stream_usage(self, lines, sid, level, provider_name):
-        """Parse final message_delta event for usage in SSE stream."""
+        """Parse usage from SSE stream.
+
+        Anthropic splits usage across two events:
+          - message_start: data.message.usage (input_tokens, cache_read/create)
+          - message_delta:  data.usage         (output_tokens)
+        GLM puts usage at top-level data.usage in both cases.
+        """
         all_text = "".join(lines)
-        for line in reversed(all_text.split("\n")):
-            if not line.startswith("data: ") or line.strip() == "data: [DONE]":
+        # Collect all usage objects and merge
+        merged_usage = {}
+        for line in all_text.split("\n"):
+            line = line.strip()
+            if not line.startswith("data: ") or line == "data: [DONE]":
                 continue
             try:
                 data = json.loads(line[6:])
+                # Top-level usage (message_delta, GLM)
                 usage = data.get("usage")
-                if usage:
-                    self._insert_usage(sid, level, provider_name, usage)
-                    return
+                # Nested usage in message_start (Anthropic)
+                msg_usage = data.get("message", {}).get("usage") if isinstance(data.get("message"), dict) else None
+                for u in (usage, msg_usage):
+                    if u and isinstance(u, dict):
+                        for k, v in u.items():
+                            if isinstance(v, (int, float)) and v > 0:
+                                merged_usage[k] = max(merged_usage.get(k, 0), v)
             except Exception:
                 continue
+        if merged_usage:
+            self._insert_usage(sid, level, provider_name, merged_usage)
+        else:
+            print(f"[msc] Warning: no usage found in stream for {provider_name}", flush=True)
 
     def _track_usage_from_body(self, resp_body, sid, level, provider_name):
         try:
@@ -1125,12 +1648,16 @@ class Handler(BaseHTTPRequestHandler):
         output_tokens = usage.get("output_tokens", 0)
         cache_read = usage.get("cache_read_input_tokens", 0)
         cache_create = usage.get("cache_creation_input_tokens", 0)
+        # Snapshot model name and label at time of usage
+        level_info = self.route_levels.get(level, {})
+        model_name = level_info.get("model", "")
+        label = level_info.get("label", "")
         conn = db_connect()
         try:
             conn.execute(
-                "INSERT INTO usage (session_id, level, provider, input_tokens, output_tokens, "
-                "cache_read_tokens, cache_create_tokens) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (sid, level, provider_name, input_tokens, output_tokens, cache_read, cache_create),
+                "INSERT INTO usage (session_id, level, provider, model_name, label, input_tokens, output_tokens, "
+                "cache_read_tokens, cache_create_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (sid, level, provider_name, model_name, label, input_tokens, output_tokens, cache_read, cache_create),
             )
             conn.commit()
         finally:
@@ -1174,6 +1701,16 @@ def _rebuild_clients():
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+ROUTING_PROMPT_PATH = MSC_DIR / "routing-prompt.md"
+
+
+def write_routing_prompt(cfg):
+    """Write routing prompt file from config (called on start and config change)."""
+    prompt = generate_routing_prompt(cfg)
+    ROUTING_PROMPT_PATH.write_text(prompt + "\n")
+    print(f"[msc] Routing prompt written to {ROUTING_PROMPT_PATH}", flush=True)
+
+
 def main():
     cfg = load_config()
     Handler.config = cfg
@@ -1181,7 +1718,12 @@ def main():
 
     init_db()
     _rebuild_clients()
+    write_routing_prompt(cfg)
     start_cot_indexer()
+
+    # Start background health check thread (every 30 min)
+    health_thread = threading.Thread(target=_health_check_loop, daemon=True)
+    health_thread.start()
 
     port = cfg.get("port", 3457)
     server = HTTPServer(("127.0.0.1", port), Handler)

@@ -3,9 +3,9 @@
   "proxy": "http://127.0.0.1:7897",
   "default_level": 1,
   "levels": {
-    "1": {"name": "glm", "provider": "glm", "model": "glm-5.1"},
-    "2": {"name": "sonnet", "provider": "anthropic", "model": "claude-sonnet-4-6"},
-    "3": {"name": "opus", "provider": "anthropic", "model": "claude-opus-4-6"}
+    "1": {"name": "glm", "provider": "glm", "model": "glm-5.1", "context": "非工作探索期闲聊、简单 Q&A、定时任务、异步任务回调"},
+    "2": {"name": "sonnet", "provider": "anthropic", "model": "claude-sonnet-4-6", "context": "代码开发、需求评审、测试工作、调试、重构"},
+    "3": {"name": "opus", "provider": "anthropic", "model": "claude-opus-4-6", "context": "复杂架构设计、深度代码审计、系统级决策"}
   },
   "providers": {
     "glm": {"url": "https://open.bigmodel.cn/api/anthropic/v1/messages", "key": "YOUR_GLM_KEY_HERE"},

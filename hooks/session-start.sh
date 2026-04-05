@@ -2,6 +2,9 @@
 # Hook: session-start — register session with msc proxy and inject CR_SESSION
 # NO set -e: must not exit early, CLAUDE_ENV_FILE injection is critical
 
+# Only activate when launched via cr (MSC_ENABLED=1)
+[[ "${MSC_ENABLED:-}" != "1" ]] && exit 0
+
 PROXY="http://127.0.0.1:3457"
 
 # Read all stdin first (Claude Code pipes JSON)
