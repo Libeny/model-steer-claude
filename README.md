@@ -1,83 +1,82 @@
 <p align="center">
-  <img src="docs/sailor.png" width="180" alt="MSC Captain">
+  <img src="docs/sailor.png" width="180" alt="MSC 船长">
   <h1 align="center">Model Steer Claude (MSC)</h1>
   <p align="center">
-    <strong>Let Claude Code take the helm</strong>
+    <strong>让 Claude Code 自己掌舵</strong>
   </p>
   <p align="center">
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
     <img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+">
     <img src="https://img.shields.io/badge/Claude_Code-plugin-orange.svg" alt="Claude Code Plugin">
-    <a href="README_CN.md">中文文档</a>
+    <a href="README_EN.md">English</a>
   </p>
 </p>
 
 ---
 
-## Why
+## 为什么需要 MSC
 
-Like a seasoned captain steering a ship, Claude Code should decide which model fits each task — not burn premium fuel on every mile.
+像一个经验丰富的船长掌舵一样，Claude Code 应该自己决定每个任务用什么模型 — 而不是每一海里都烧最贵的燃料。
 
-As AI workers join daily workflows, two problems emerge:
+随着数字员工上岗（Claude Code、Agent SDK），个人和企业搭建 AI 工作流时会遇到两个问题：
 
-1. **Cost** — Every message burns the same premium tokens, whether it's "where's that file?" or "design a distributed system"
-2. **Right tool for the job** — Architecture decisions go to Opus, implementation to Sonnet, frontend UI to vision-capable models, routine tasks to fast cheap models
+1. **成本** — 每条消息都在烧高价 token，"这个文件在哪"和"设计一个分布式架构"花的钱一样多
+2. **术业有专攻** — 架构设计交给 Opus，功能实现交给 Sonnet，前端 UI 交给有视觉理解能力的模型，日常杂活交给便宜快速的模型
 
-MSC gives Claude Code the helm. It picks the right model for each task — cheap models for routine work, powerful models for complex problems. When orchestrating sub-agents, each one gets the model that fits its specialty. Cost management and expertise allocation, handled by the AI itself.
+MSC 把方向盘交给 Claude Code。它自己判断任务复杂度，选择最合适的模型 — 日常杂活走便宜模型，复杂编码走强模型。在调配下游 sub-agent 时，每个 agent 都能用到最适配其专业领域的模型。成本管控和能力匹配，AI 自己搞定。
 
-## How it works
+## 工作原理
 
 ```
-User → Claude Code → MSC Proxy (localhost:3457) → GLM / Sonnet / Opus
+用户 → Claude Code → MSC Proxy (localhost:3457) → GLM / Sonnet / Opus
                          ↑
-              AI reads routing prompt,
-              runs curl to switch level
-              before responding
+              AI 读取路由规则，
+              在回答前 curl 切换等级
 ```
 
-- **Level 1** — cheap model (GLM): chat, Q&A, async callbacks
-- **Level 2** — mid model (Sonnet): code, review, testing, debugging
-- **Level 3** — top model (Opus): architecture, deep analysis
+- **Level 1** — 便宜模型 (GLM)：闲聊、Q&A、定时任务、异步回调
+- **Level 2** — 中等模型 (Sonnet)：代码开发、需求评审、测试、调试
+- **Level 3** — 顶级模型 (Opus)：复杂架构设计、深度代码审计
 
-The routing rules come from config, editable via Dashboard. The proxy patches thinking-block signatures so cross-model sessions don't break.
+路由规则来自配置文件，在 Dashboard 上直接编辑。代理会自动修补 thinking-block 签名，让跨模型会话不会崩。
 
-## Quick start
+## 快速开始
 
 ```bash
 git clone https://github.com/Libeny/model-steer-claude.git
 cd model-steer-claude
 bash install.sh
 
-# Edit config — add your API keys
+# 编辑配置 — 填入 API Key
 vim ~/.msc/config.json
 
-# Source shell, then go
+# 加载 shell 函数
 source ~/.zshrc
-cr                    # Launch Claude Code through MSC
-crd                   # Open Dashboard
+cr                    # 启动 Claude Code（通过 MSC 路由）
+crd                   # 打开 Dashboard
 ```
 
-## Usage
+## 使用方式
 
-### CLI mode (`cr`)
+### CLI 模式 (`cr`)
 
-`cr` wraps `claude` with the MSC plugin and routing prompt:
+`cr` 封装了 `claude`，自动加载 MSC 插件和路由规则：
 
 ```bash
-cr                          # Interactive session
-cr -p "explain this file"   # Print mode
-cr --resume <session-id>    # Resume a session
+cr                          # 交互式会话
+cr -p "解释一下这个文件"      # 单次输出
+cr --resume <session-id>    # 恢复会话
 ```
 
-Inside a session, Claude auto-switches levels. You can also force it:
+会话内 Claude 自动切换等级，也可以手动控制：
 
-| Command | Effect |
-|---------|--------|
-| `/smoke` | Drop to cheapest model |
-| `/redbull` | Switch to most powerful model |
-| `/think-level N` | Switch to level N (1/2/3) |
+| 命令 | 效果 |
+|------|------|
+| `/smoke` | 切到最便宜模型 |
+| `/redbull` | 切到最强模型 |
+| `/think-level N` | 切到指定等级 (1/2/3) |
 
-### Agent SDK mode
+### Agent SDK 模式
 
 ```python
 from claude_agent_sdk import query, ClaudeAgentOptions
@@ -87,7 +86,7 @@ MSC_PLUGIN = str(Path.home() / ".claude/plugins/msc")
 ROUTING = (Path.home() / ".msc/routing-prompt.md").read_text()
 
 async for msg in query(
-    prompt="Implement a red-black tree with tests",
+    prompt="用 Python 实现红黑树，包含 insert/search/delete 和测试",
     options=ClaudeAgentOptions(
         plugins=[{"type": "local", "path": MSC_PLUGIN}],
         env={"MSC_ENABLED": "1"},
@@ -97,19 +96,19 @@ async for msg in query(
     print(msg.content)
 ```
 
-Same plugin, same hooks, same routing — identical behavior to `cr`.
+同一个插件、同一套 hooks、同一套路由 — 和 `cr` 行为完全一致。
 
 ## Dashboard
 
-`crd` opens a local web UI at `http://localhost:3457/ui`:
+`crd` 打开本地 Web 界面 `http://localhost:3457/ui`：
 
-- **Model config** — add/remove/reorder models, set routing context per level
-- **Usage analytics** — token breakdown (input/output/cache), cost tracking, model distribution
-- **CoT viewer** — browse conversation history across sessions
+- **模型配置** — 增删排序模型，设置每个等级的路由场景
+- **用量分析** — Token 四维拆解（input/output/cache_read/cache_create）、费用统计、模型分布
+- **CoT 查看器** — 浏览跨 session 的对话历史
 
-## Config
+## 配置
 
-`~/.msc/config.json` — all settings in one file:
+`~/.msc/config.json` — 所有配置集中管理：
 
 ```json
 {
@@ -118,43 +117,43 @@ Same plugin, same hooks, same routing — identical behavior to `cr`.
       "name": "glm",
       "provider": "glm",
       "model": "glm-5.1",
-      "context": "chat, Q&A, scheduled tasks"
+      "context": "非工作探索期闲聊、简单 Q&A、定时任务"
     },
     "2": {
       "name": "sonnet",
       "provider": "anthropic",
       "model": "claude-sonnet-4-6",
-      "context": "coding, review, testing, debugging"
+      "context": "代码开发、需求评审、测试工作、调试"
     }
   }
 }
 ```
 
-The `context` field drives routing — change it in Dashboard, the routing prompt regenerates automatically.
+`context` 字段驱动路由决策 — 在 Dashboard 上改完，路由规则自动重新生成。
 
-## Architecture
+## 架构
 
 ```
 model-steer-claude/
-├── .claude-plugin/plugin.json   # Plugin manifest
+├── .claude-plugin/plugin.json   # 插件清单
 ├── hooks/
-│   ├── hooks.json               # Auto-registered hooks (SessionStart, UserPromptSubmit)
-│   ├── session-start.sh         # Register session with proxy
-│   └── user-prompt-submit.sh    # Show current level
-├── skills/                      # /smoke, /redbull, /think-level, model-steer
-├── commands/                    # Slash command definitions
-├── proxy.py                     # Core proxy (~1100 lines)
+│   ├── hooks.json               # 自注册 hooks（SessionStart、UserPromptSubmit）
+│   ├── session-start.sh         # 向代理注册 session
+│   └── user-prompt-submit.sh    # 显示当前等级
+├── skills/                      # /smoke、/redbull、/think-level、model-steer
+├── commands/                    # 斜杠命令定义
+├── proxy.py                     # 核心代理
 ├── config/default-config.json
-├── ui/dashboard.html            # Dashboard SPA
-└── install.sh                   # One-command setup
+├── ui/dashboard.html            # Dashboard 单页应用
+└── install.sh                   # 一键安装
 ```
 
-Key design decisions:
+核心设计：
 
-- **Plugin isolation** — MSC only loads when explicitly requested (`--plugin-dir`). Normal `claude` sees nothing.
-- **System prompt injection** — Routing rules are appended via `--append-system-prompt-file`, not baked into CLAUDE.md.
-- **Dynamic config** — Dashboard edits config, proxy regenerates `~/.msc/routing-prompt.md`, next session picks it up.
-- **Signature patching** — GLM's empty thinking-block signatures are replaced with a valid placeholder, enabling seamless cross-model sessions.
+- **插件隔离** — MSC 只在显式加载时生效（`--plugin-dir`），普通 `claude` 看不到任何 MSC 内容
+- **System prompt 注入** — 路由规则通过 `--append-system-prompt-file` 注入，不侵入 CLAUDE.md
+- **动态配置** — Dashboard 改配置 → proxy 重新生成路由 prompt → 下次 session 自动生效
+- **签名修补** — GLM 的空 thinking-block 签名用合法占位符替换，跨模型会话无缝切换
 
 ## License
 
