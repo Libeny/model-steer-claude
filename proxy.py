@@ -247,8 +247,20 @@ def init_db():
             indexed_at TEXT DEFAULT (datetime('now'))
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS fallback_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            from_level INTEGER,
+            from_label TEXT DEFAULT '',
+            to_level INTEGER,
+            to_label TEXT DEFAULT '',
+            provider TEXT,
+            reason TEXT DEFAULT '',
+            timestamp TEXT DEFAULT (datetime('now'))
+        )
+    """)
     conn.commit()
-    # Migrations: add columns if they don't exist
     try:
         conn.execute("ALTER TABLE usage ADD COLUMN model_name TEXT DEFAULT ''")
     except Exception:
@@ -591,6 +603,104 @@ def count_messages_in_file(filepath):
 CLAUDE_HOME = Path.home() / ".claude"
 USAGE_CACHE = CLAUDE_HOME / ".usage-cache.json"
 HEALTH_INTERVAL = 1800  # 30 minutes
+CB_PROBE_INTERVAL = 300  # circuit breaker probe: 5 minutes
+
+
+def _log_fallback(sid, from_level, from_label, to_level, to_label, provider, reason):
+    """Record a fallback event to SQLite."""
+    try:
+        conn = db_connect()
+        conn.execute(
+            "INSERT INTO fallback_log (session_id, from_level, from_label, to_level, to_label, provider, reason) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (sid, from_level, from_label, to_level, to_label, provider, reason),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Circuit Breaker
+# ---------------------------------------------------------------------------
+_circuit_breaker = {}  # {provider_name: {"banned": bool, "reason": str, "banned_at": float}}
+
+
+def cb_ban(provider_name, reason):
+    """Ban a provider — skip it in the fallback chain."""
+    _circuit_breaker[provider_name] = {
+        "banned": True,
+        "reason": reason,
+        "banned_at": time.time(),
+    }
+    print(f"[msc] Circuit breaker BAN: {provider_name} — {reason}", flush=True)
+
+
+def cb_unban(provider_name):
+    """Unban a provider — it's back in the fallback chain."""
+    if provider_name in _circuit_breaker:
+        _circuit_breaker[provider_name]["banned"] = False
+        print(f"[msc] Circuit breaker UNBAN: {provider_name}", flush=True)
+
+
+def cb_is_banned(provider_name):
+    """Check if a provider is currently banned."""
+    state = _circuit_breaker.get(provider_name)
+    return bool(state and state.get("banned"))
+
+
+def cb_status():
+    """Return circuit breaker status for all providers."""
+    return {name: dict(state) for name, state in _circuit_breaker.items()}
+
+
+# Error codes that indicate quota exhaustion → immediate ban
+_CB_BAN_CODES = {"1304", "1308", "1309", "1310"}
+
+
+def _cb_probe_loop():
+    """Background thread: probe banned providers every CB_PROBE_INTERVAL."""
+    time.sleep(30)  # initial delay
+    while True:
+        time.sleep(CB_PROBE_INTERVAL)
+        try:
+            banned_providers = [name for name, state in _circuit_breaker.items()
+                                if state.get("banned")]
+            if not banned_providers or not Handler.config or not Handler.clients:
+                continue
+
+            for provider_name in banned_providers:
+                provider_cfg = Handler.config.get("providers", {}).get(provider_name)
+                if not provider_cfg:
+                    continue
+                # Find a model for this provider to test with
+                test_model = ""
+                for lvl_info in Handler.route_levels.values():
+                    if lvl_info.get("provider") == provider_name:
+                        test_model = lvl_info["model"]
+                        break
+                if not test_model:
+                    continue
+
+                result = _check_custom_api_health(
+                    provider_name, provider_cfg, test_model, Handler.clients
+                )
+                if result["status"] == "ok":
+                    cb_unban(provider_name)
+                else:
+                    print(f"[msc] CB probe: {provider_name} still down — {result.get('error', '')}", flush=True)
+
+            # Also probe anthropic if banned
+            if cb_is_banned("anthropic"):
+                result = _check_anthropic_health()
+                if result["status"] == "ok":
+                    cb_unban("anthropic")
+                else:
+                    print(f"[msc] CB probe: anthropic still down — {result.get('error', '')}", flush=True)
+
+        except Exception as e:
+            print(f"[msc] CB probe error: {e}", flush=True)
 
 
 def _read_claude_credentials():
@@ -718,6 +828,64 @@ def _check_anthropic_health():
     return result
 
 
+def _fetch_anthropic_quota():
+    """Fetch real-time Anthropic quota with reset times.
+    Returns dict with usage percentages and human-readable reset times, or None on failure.
+    """
+    creds = _read_claude_credentials()
+    if not creds:
+        return None
+    oauth = creds.get("claudeAiOauth", {})
+    token = oauth.get("accessToken", "")
+    if not token:
+        return None
+
+    try:
+        proxy_url = Handler.config.get("proxy", "") if Handler.config else ""
+        client_kwargs = {"timeout": 10}
+        if proxy_url:
+            client_kwargs["proxy"] = proxy_url
+
+        with httpx.Client(**client_kwargs) as client:
+            resp = client.get(
+                "https://api.anthropic.com/api/oauth/usage",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "anthropic-beta": "oauth-2025-04-20",
+                },
+            )
+
+        if resp.status_code != 200:
+            return None
+
+        data = resp.json()
+        quota = {"subscription": oauth.get("subscriptionType", "unknown"), "tiers": []}
+
+        # Parse each usage tier
+        tiers = [
+            ("5h", data.get("five_hour", {})),
+            ("7d", data.get("seven_day", {})),
+            ("7d Sonnet", data.get("seven_day_sonnet") or {}),
+        ]
+        for label, tier_data in tiers:
+            if not tier_data:
+                continue
+            utilization = int(tier_data.get("utilization", 0))
+            resets_at = tier_data.get("resets_at", "")
+            remaining = max(0, 100 - utilization)
+            quota["tiers"].append({
+                "label": label,
+                "utilization": utilization,
+                "remaining": remaining,
+                "resets_at": resets_at,
+                "exhausted": utilization >= 100,
+            })
+
+        return quota
+    except Exception:
+        return None
+
+
 def _check_custom_api_health(provider_name, provider_cfg, model, clients):
     """Check custom API (GLM etc) by sending a minimal request."""
     result = {"status": "unknown", "error": "", "details": {}}
@@ -815,6 +983,90 @@ def get_fallback_order(current_level, max_level):
     for l in range(current_level + 1, max_level + 1):
         order.append(l)
     return order
+
+
+# ---------------------------------------------------------------------------
+# Error Classification
+# ---------------------------------------------------------------------------
+class ProxyFallbackError(Exception):
+    """应 fallback 到下一个 provider 的错误"""
+    def __init__(self, reason):
+        self.reason = reason
+        super().__init__(reason)
+
+
+class ProxyFatalError(Exception):
+    """不可 fallback 的错误，响应已发送给客户端"""
+    pass
+
+
+def _extract_business_code(resp_body, code_path):
+    """从 JSON 响应体提取业务错误码，如 'error.code' -> resp['error']['code']"""
+    try:
+        data = json.loads(resp_body) if isinstance(resp_body, bytes) else resp_body
+        current = data
+        for key in code_path.split("."):
+            if isinstance(current, dict):
+                current = current.get(key)
+            else:
+                return None
+        return str(current) if current is not None else None
+    except Exception:
+        return None
+
+
+def classify_error(status_code, resp_body, provider_name, fallback_cfg):
+    """分类错误，返回 (should_fallback, reason)。
+
+    判断优先级：per-provider 业务码 > HTTP 状态码。
+
+    Returns:
+        (True, reason)  — 应该 fallback 到下一个 provider
+        (False, reason) — 不可 fallback，直接返回给客户端
+    """
+    rules = fallback_cfg.get("error_rules", {})
+    default_rules = rules.get("_default", {})
+    provider_rules = rules.get(provider_name, {})
+
+    retriable_http = set(provider_rules.get("retriable_http",
+                            default_rules.get("retriable_http", [429, 500, 502, 503, 529])))
+    fatal_http = set(provider_rules.get("fatal_http",
+                       default_rules.get("fatal_http", [400, 401, 403, 404])))
+
+    # 1. 优先检查 per-provider 业务错误码（可覆盖 HTTP 级分类）
+    code_path = provider_rules.get("business_code_path",
+                  default_rules.get("business_code_path", ""))
+    if code_path:
+        biz_code = _extract_business_code(resp_body, code_path)
+        if biz_code:
+            provider_fatal = set(provider_rules.get("fatal_codes", []))
+            provider_retriable = set(provider_rules.get("retriable_codes", []))
+
+            if biz_code in provider_fatal:
+                # Quota exhaustion codes → proactive ban
+                if biz_code in _CB_BAN_CODES:
+                    cb_ban(provider_name, f"biz code {biz_code}")
+                return False, f"biz code {biz_code} (fatal)"
+            if biz_code in provider_retriable:
+                return True, f"biz code {biz_code} (retriable)"
+            # 业务码不在任何列表中 — 按保守策略：5xx retriable，其余 fatal
+            if status_code >= 500:
+                return True, f"HTTP {status_code} biz {biz_code} (unknown, server error)"
+            return False, f"HTTP {status_code} biz {biz_code} (unknown, fatal)"
+
+    # 2. 无业务码时，按 HTTP 状态码判断
+    if status_code in retriable_http:
+        return True, f"HTTP {status_code} (retriable)"
+    if status_code in fatal_http:
+        return False, f"HTTP {status_code} (fatal)"
+
+    # 3. 未知状态码：5xx 可 fallback，4xx 不可
+    if status_code >= 500:
+        return True, f"HTTP {status_code} (server error, retriable)"
+    if status_code >= 400:
+        return False, f"HTTP {status_code} (client error, fatal)"
+
+    return False, f"HTTP {status_code} (unexpected)"
 
 
 # ---------------------------------------------------------------------------
@@ -922,6 +1174,15 @@ class Handler(BaseHTTPRequestHandler):
 
         elif path == "/api/subscriptions/subscribe" or path == "/api/subscriptions/unsubscribe":
             self._json({"success": True})
+
+        elif path == "/api/quota":
+            self._handle_quota()
+
+        elif path == "/api/circuit-breaker":
+            self._json(cb_status())
+
+        elif path == "/api/fallback-log":
+            self._handle_fallback_log(params)
 
         else:
             self._json({"status": "ok"})
@@ -1332,6 +1593,61 @@ class Handler(BaseHTTPRequestHandler):
 
         self._json(result)
 
+    def _handle_quota(self):
+        """Return quota status for all providers with reset times."""
+        result = {"anthropic": None, "providers": {}}
+
+        # --- Anthropic (Claude subscription) ---
+        anthropic_quota = _fetch_anthropic_quota()
+        if anthropic_quota:
+            result["anthropic"] = anthropic_quota
+
+        # --- Custom providers (from health check cache) ---
+        for level_int, health in Handler._model_health.items():
+            provider = health.get("provider", "")
+            if provider == "anthropic":
+                continue
+            if provider not in result["providers"]:
+                result["providers"][provider] = {
+                    "status": health.get("status", "unknown"),
+                    "error": health.get("error", ""),
+                    "model": health.get("model", ""),
+                    "checked_at": health.get("checked_at", ""),
+                }
+
+        self._json(result)
+
+    def _handle_fallback_log(self, params):
+        """Return recent fallback events."""
+        limit = int(params.get("limit", ["50"])[0])
+        session_id = params.get("session", [""])[0]
+        conn = db_connect()
+        try:
+            if session_id:
+                rows = conn.execute(
+                    "SELECT * FROM fallback_log WHERE session_id = ? ORDER BY timestamp DESC LIMIT ?",
+                    (session_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM fallback_log ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            result = [{
+                "id": r["id"],
+                "session_id": r["session_id"],
+                "from_level": r["from_level"],
+                "from_label": r["from_label"],
+                "to_level": r["to_level"],
+                "to_label": r["to_label"],
+                "provider": r["provider"],
+                "reason": r["reason"],
+                "timestamp": r["timestamp"],
+            } for r in rows]
+        finally:
+            conn.close()
+        self._json(result)
+
     # ---- CUI-compatible API endpoints ----
 
     def _handle_cui_conversations(self, params):
@@ -1500,24 +1816,44 @@ class Handler(BaseHTTPRequestHandler):
             valid = sorted(self.route_levels.keys())
             level = min(valid, key=lambda l: abs(l - level))
         fallback_order = [l for l in get_fallback_order(level, max_level) if l in self.route_levels]
-        retry_cfg = self.config.get("retry", {"max_attempts": 3, "interval_seconds": 2})
 
         last_error = None
+        tried_levels = []  # track failed attempts for logging
         for try_level in fallback_order:
             level_info = self.route_levels[try_level]
             provider_name = level_info["provider"]
+
+            # Circuit breaker: skip banned providers
+            if cb_is_banned(provider_name):
+                reason = cb_status().get(provider_name, {}).get('reason', '')
+                print(f"[msc] CB skip: L{try_level} ({level_info['label']}) — banned: {reason}", flush=True)
+                tried_levels.append((try_level, level_info['label'], provider_name, f"CB banned: {reason}"))
+                continue
+
             provider_cfg = self.config["providers"][provider_name]
             client = self.clients[provider_name]
 
-            for attempt in range(retry_cfg["max_attempts"]):
-                try:
-                    self._do_proxy_request(body, try_level, level_info, provider_name, provider_cfg, client, sid)
-                    return
-                except Exception as e:
-                    last_error = e
-                    print(f"[msc] Error L{try_level} attempt {attempt + 1}: {e}", flush=True)
-                    if attempt < retry_cfg["max_attempts"] - 1:
-                        time.sleep(retry_cfg["interval_seconds"])
+            try:
+                self._do_proxy_request(body, try_level, level_info, provider_name, provider_cfg, client, sid)
+                # Success — log any fallbacks that occurred
+                for (fl, flbl, fp, fr) in tried_levels:
+                    _log_fallback(sid, fl, flbl, try_level, level_info['label'], fp, fr)
+                return  # success
+            except ProxyFallbackError as e:
+                last_error = e
+                tried_levels.append((try_level, level_info['label'], provider_name, e.reason))
+                print(f"[msc] Fallback: L{try_level} ({level_info['label']}) → {e.reason}", flush=True)
+                # Ban Anthropic on persistent 429 (quota exhaustion)
+                if provider_name == "anthropic" and "429" in str(e.reason):
+                    quota = _fetch_anthropic_quota()
+                    if quota:
+                        for tier in quota.get("tiers", []):
+                            if tier.get("exhausted"):
+                                cb_ban("anthropic", f"quota exhausted: {tier['label']} {tier['utilization']}%")
+                                break
+                continue  # try next level
+            except ProxyFatalError:
+                return  # response already sent to client
 
         # All fallbacks exhausted
         print(f"[msc] All fallbacks exhausted: {last_error}", flush=True)
@@ -1558,13 +1894,35 @@ class Handler(BaseHTTPRequestHandler):
         content = json.dumps(req_body)
         print(f"[msc] → Level {level} ({level_info['label']})", flush=True)
 
-        if is_stream:
-            self._stream_response(client, url, headers, content, is_glm, sid, level, provider_name)
-        else:
-            self._non_stream_response(client, url, headers, content, is_glm, sid, level, provider_name)
+        try:
+            if is_stream:
+                self._stream_response(client, url, headers, content, is_glm, sid, level, provider_name)
+            else:
+                self._non_stream_response(client, url, headers, content, is_glm, sid, level, provider_name)
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.ReadError, httpx.WriteError, OSError) as e:
+            # Network-level errors always trigger fallback
+            raise ProxyFallbackError(f"network: {type(e).__name__}: {e}")
 
     def _stream_response(self, client, url, headers, content, is_glm, sid, level, provider_name):
         with client.stream("POST", url, headers=headers, content=content) as resp:
+            if resp.status_code >= 400:
+                # Error response — read body and decide whether to fallback
+                error_body = resp.read()
+                fallback_cfg = self.config.get("fallback", {})
+                should_fallback, reason = classify_error(
+                    resp.status_code, error_body, provider_name, fallback_cfg
+                )
+                if should_fallback:
+                    raise ProxyFallbackError(reason)
+                # Not retriable — send error to client
+                self.send_response(resp.status_code)
+                for k, v in resp.headers.multi_items():
+                    if k.lower() not in ("transfer-encoding", "content-length", "connection"):
+                        self.send_header(k, v)
+                self.end_headers()
+                self.wfile.write(error_body)
+                raise ProxyFatalError(reason)
+
             self.send_response(resp.status_code)
             for k, v in resp.headers.multi_items():
                 if k.lower() not in ("transfer-encoding", "content-length", "connection"):
@@ -1589,6 +1947,25 @@ class Handler(BaseHTTPRequestHandler):
 
     def _non_stream_response(self, client, url, headers, content, is_glm, sid, level, provider_name):
         resp = client.post(url, headers=headers, content=content)
+
+        if resp.status_code >= 400:
+            # Error response — decide whether to fallback
+            fallback_cfg = self.config.get("fallback", {})
+            should_fallback, reason = classify_error(
+                resp.status_code, resp.content, provider_name, fallback_cfg
+            )
+            if should_fallback:
+                raise ProxyFallbackError(reason)
+            # Not retriable — send error to client
+            resp_body = resp.content
+            if is_glm:
+                resp_body = patch_json_signatures(resp_body)
+            self.send_response(resp.status_code)
+            self.send_header("Content-Type", resp.headers.get("content-type", "application/json"))
+            self.end_headers()
+            self.wfile.write(resp_body)
+            raise ProxyFatalError(reason)
+
         resp_body = resp.content
         if is_glm:
             resp_body = patch_json_signatures(resp_body)
@@ -1724,6 +2101,10 @@ def main():
     # Start background health check thread (every 30 min)
     health_thread = threading.Thread(target=_health_check_loop, daemon=True)
     health_thread.start()
+
+    # Start circuit breaker probe thread (every 5 min)
+    cb_thread = threading.Thread(target=_cb_probe_loop, daemon=True)
+    cb_thread.start()
 
     port = cfg.get("port", 3457)
     server = HTTPServer(("127.0.0.1", port), Handler)

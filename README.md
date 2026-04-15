@@ -1,8 +1,11 @@
 <p align="center">
   <img src="docs/sailor.png" width="180" alt="MSC 船长">
-  <h1 align="center">Model Steer Claude (MSC)</h1>
+  <h1 align="center">NB-Claude</h1>
   <p align="center">
-    <strong>让 Claude Code 自己掌舵</strong>
+    <strong>Never Break Your Flow</strong>
+  </p>
+  <p align="center">
+    <em>为 AI 数字员工 / AI-Coding 集群设计的 Claude Code 高可用模型代理</em>
   </p>
   <p align="center">
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
@@ -14,38 +17,89 @@
 
 ---
 
-## 为什么需要 MSC
+## 为什么需要 NB-Claude
 
-像一个经验丰富的船长掌舵一样，Claude Code 应该自己决定每个任务用什么模型 — 而不是每一海里都烧最贵的燃料。
+Claude Code 是当下最强编程 Agent，但它有一条硬限制：**额度用完就停工**。
 
-随着数字员工上岗（Claude Code、Agent SDK），个人和企业搭建 AI 工作流时会遇到两个问题：
+人在用的时候还好 — 429 了等一会儿，重新来。但对于 **AI 数字员工**来说，这是致命的：429 了整个任务链断了，后面的任务全部卡住，没人手动重启。
 
-1. **成本** — 每条消息都在烧高价 token，"这个文件在哪"和"设计一个分布式架构"花的钱一样多
-2. **术业有专攻** — 架构设计交给 Opus，功能实现交给 Sonnet，前端 UI 交给有视觉理解能力的模型，日常杂活交给便宜快速的模型
+NB-Claude 解决这个问题。它是一个本地代理，架在 Claude Code 和模型 API 之间，确保 **任何情况下都有模型可用**：
 
-MSC 把方向盘交给 Claude Code。它自己判断任务复杂度，选择最合适的模型 — 日常杂活走便宜模型，复杂编码走强模型。在调配下游 sub-agent 时，每个 agent 都能用到最适配其专业领域的模型。成本管控和能力匹配，AI 自己搞定。
+| 场景 | 没有 NB-Claude | 有 NB-Claude |
+|------|---------------|-------------|
+| Sonnet 额度耗尽 | 任务中断，等待重置 | 自动切 GLM，无感继续 |
+| API 返回 500 | Claude Code 退出 | 自动重试下一个 provider |
+| GLM 临时限流 | 直接报错 | 自动降级到其他可用模型 |
+| 主模型持续不可用 | 人工介入 | Circuit Breaker 自动熔断，5 分钟探测恢复 |
+
+5 小时窗口耗尽、7 天 Sonnet 额度见底、API 返回 429 —— 你只能等，工作流直接中断。
+
+MSC 解决这个问题。它是一个本地代理，架在 Claude Code 和模型 API 之间，提供 **三层保障**：
+
+| 层级 | 能力 | 说明 |
+|------|------|------|
+| **第一层：Never Fallback** | 自动故障转移 | Sonnet 429？自动切 GLM。GLM 也不行？按配置链路继续降级。错误码智能分类，不该重试的（内容安全）不浪费请求 |
+| **第二层：任务路由** | AI 自主切换模型 | 开启 `--route` 后，AI 根据任务复杂度自动选模型 —— 闲聊走便宜模型，编码走 Sonnet，架构设计走 Opus |
+| **第三层：Agent 编排** | Sub-agent 模型分配 | 多 Agent 协作时，每个 Agent 可以使用最适合其任务的模型（规划中） |
 
 ## 工作原理
 
 ```
-用户 → Claude Code → MSC Proxy (localhost:3457) → GLM / Sonnet / Opus / ...
-                         ↑
-              AI 读取路由规则，
-              在回答前 curl 切换等级
+                          ┌─ Sonnet (Anthropic)  ── 429/500? ──┐
+用户 → Claude Code → MSC ─┤                                       ├→ 永不中断
+   Proxy (本地代理)        └─ GLM / DeepSeek / Moonshine ... ────┘
 ```
 
-等级数量、顺序、对应的模型和用途完全由你定义 — 在 Dashboard 上自由配置，拖拽排序。没有固定的"Level 1 必须是什么"，你根据自己的需求编排：
+### 第一层：Never Fallback（默认开启）
 
-| 等级 | 模型 | 用途 | 你也可以这样配 |
-|------|------|------|--------------|
-| 1 | GLM | 闲聊、Q&A、定时任务 | DeepSeek、Moonshot、Qwen... |
-| 2 | Sonnet | 代码开发、测试、调试 | 任何编码能力强的模型 |
-| 3 | Opus | 架构设计、深度审计 | 任何推理能力强的模型 |
-| N | ... | 你定义的场景 | 视觉模型做前端、专业模型做特定领域 |
+MSC 代理所有 API 请求。当主模型不可用时，自动按配置链路降级：
 
-每个等级的**路由场景**（什么时候用这个模型）在 Dashboard 上填写，AI 按这些描述自动决策。你可以随时增删等级、调整用途、更换模型，保存后下次 session 立即生效。
+```
+Sonnet → GLM-5.1 → 其他可用模型
+```
 
-代理会自动修补 thinking-block 签名，让跨模型会话不会崩。
+**智能错误分类**（不只看 HTTP 状态码）：
+
+| 场景 | 处理方式 |
+|------|---------|
+| Anthropic 429（额度耗尽） | 自动 fallback |
+| Anthropic 500/503（服务异常） | 自动 fallback |
+| GLM 1302/1303/1305（临时限流） | 自动 fallback |
+| GLM 1301（内容安全审核） | **不 fallback**（换模型也会触发） |
+| GLM 1304/1308（配额耗尽） | **不 fallback**（标记 provider 不可用） |
+| GLM 1234（网络错误） | 自动 fallback |
+
+错误分类规则可配置，支持任意模型厂商的业务错误码。详见 `~/.msc/config.json` 中的 `fallback.error_rules`。
+
+### 第二层：任务路由（可选，`cr --route`）
+
+默认 `cr` 只做 fallback 保障。加 `--route` 后，MSC 注入路由规则到 system prompt，AI 会根据任务复杂度自动切换模型：
+
+```
+"这个文件在哪？"     → GLM（便宜快速）
+"帮我写个单元测试"   → Sonnet（编码强）
+"设计微服务架构"     → Opus（深度推理）
+```
+
+等级数量、模型、用途完全在 Dashboard 上配置，拖拽排序。
+
+### 额度查看
+
+```bash
+crq    # 查看当前所有模型的额度状态和重置时间
+```
+
+输出示例：
+
+```
+  Claude Subscription: pro
+
+  5h         [█████████░░░░░░░░░░░]  45%  55% left    resets in 2h30m
+  7d         [██████████████░░░░░░]  72%  28% left    resets in 6d12h
+  7d Sonnet  [█████████████████░░░]  88%  12% left    resets in 6d12h
+
+  ✓ glm: glm-5.1 (ok)
+```
 
 ## 快速开始
 
@@ -59,31 +113,32 @@ vim ~/.msc/config.json
 
 # 加载 shell 函数
 source ~/.zshrc
-cr                    # 启动 Claude Code（通过 MSC 路由）
+cr                    # 启动 Claude Code（自动 fallback 保障）
+cr --route            # 启动 + AI 自主路由
 crd                   # 打开 Dashboard
+crq                   # 查看模型额度
 ```
 
-## 使用方式
-
-### CLI 模式 (`cr`)
-
-`cr` 封装了 `claude`，自动加载 MSC 插件和路由规则：
+## CLI 命令
 
 ```bash
-cr                          # 交互式会话
-cr -p "解释一下这个文件"      # 单次输出
+cr                          # 交互式会话（仅 fallback 保障）
+cr --route                  # 交互式会话（fallback + AI 路由）
+cr -p "解释这个文件"         # 单次输出
 cr --resume <session-id>    # 恢复会话
+crd                         # 打开 Dashboard
+crq                         # 查看额度状态
 ```
 
-会话内 Claude 自动切换等级，也可以手动控制：
+会话内命令：
 
 | 命令 | 效果 |
 |------|------|
 | `/smoke` | 切到最便宜模型 |
 | `/redbull` | 切到最强模型 |
-| `/think-level N` | 切到指定等级 (1/2/3) |
+| `/think-level N` | 切到指定等级 |
 
-### Agent SDK 模式
+## Agent SDK 模式
 
 ```python
 from claude_agent_sdk import query, ClaudeAgentOptions
@@ -115,30 +170,6 @@ async for msg in query(
 
 <p align="center"><img src="docs/screenshot-models.png" width="700" alt="模型配置"></p>
 
-每个模型卡片下方显示**路由场景** — AI 根据这些描述决定什么时候用哪个模型。
-
-### 新增模型
-
-点击「+ 新增模型」，支持两种方式：
-
-**官方 Claude**（使用你的 Claude 订阅 OAuth）：
-
-<p align="center"><img src="docs/screenshot-add-claude.png" width="500" alt="新增 Claude 模型"></p>
-
-**自定义 API**（GLM、DeepSeek、Moonshot、Qwen 等）：
-
-<p align="center"><img src="docs/screenshot-add-custom.png" width="500" alt="新增自定义模型"></p>
-
-内置快速预设一键填充，也可以手动填写任何兼容 Anthropic API 格式的接口。
-
-关键字段说明：
-
-| 字段 | 说明 |
-|------|------|
-| 路由场景 | AI 根据这个描述决定何时使用此模型（如"代码开发、需求评审"） |
-| 模型颜色 | 在开销面板和项目用量中区分不同模型 |
-| 代理 | 如果需要通过代理访问 API（如海外接口），填写代理地址 |
-
 ### 开销面板
 
 实时查看费用和节省：
@@ -146,9 +177,45 @@ async for msg in query(
 <p align="center"><img src="docs/screenshot-cost.png" width="700" alt="开销面板"></p>
 
 - **混合模式费用** — 实际花费（支持 ¥/$ 切换）
-- **已为您节省** — 非 Claude 模型的 token 如果全走 Sonnet 要多花多少，点击展开明细
-- **模型用量分布** — 各模型 token 占比，颜色对应模型配置
-- **项目用量排行** — 按项目聚合，分段条显示各模型比例
+- **已为您节省** — 非 Claude 模型的 token 如果全走 Sonnet 要多花多少
+- **模型用量分布** — 各模型 token 占比
+- **项目用量排行** — 按项目聚合
+
+## 配置
+
+`~/.msc/config.json`：
+
+```json
+{
+  "default_level": 2,
+  "levels": {
+    "1": {"name": "glm", "provider": "glm", "model": "glm-5.1", "context": "闲聊、Q&A"},
+    "2": {"name": "sonnet", "provider": "anthropic", "model": "claude-sonnet-4-6", "context": "编码、测试"},
+    "3": {"name": "opus", "provider": "anthropic", "model": "claude-opus-4-6", "context": "架构设计"}
+  },
+  "providers": {
+    "glm": {"url": "https://open.bigmodel.cn/api/anthropic/v1/messages", "key": "..."},
+    "anthropic": {"url": "https://api.anthropic.com", "passthrough_auth": true}
+  },
+  "fallback": {
+    "error_rules": {
+      "_default": {
+        "retriable_http": [429, 500, 502, 503, 529],
+        "fatal_http": [400, 401, 403, 404]
+      },
+      "glm": {
+        "business_code_path": "error.code",
+        "retriable_codes": ["1200", "1230", "1234", "1302", "1303", "1305", "1312"],
+        "fatal_codes": ["1301", "1304", "1308", "1309", "1310", "1311", "1313",
+                        "1000", "1001", "1002", "1003", "1004",
+                        "1110", "1111", "1112", "1113", "1121"]
+      }
+    }
+  }
+}
+```
+
+`fallback.error_rules` 支持任意模型厂商：`_default` 定义通用规则，per-provider 键定义特定业务错误码。添加新厂商时，只需增加对应的 provider 配置段。
 
 ## 架构
 
@@ -156,23 +223,23 @@ async for msg in query(
 model-steer-claude/
 ├── .claude-plugin/plugin.json   # 插件清单
 ├── hooks/
-│   ├── hooks.json               # 自注册 hooks（SessionStart、UserPromptSubmit）
+│   ├── hooks.json               # 自注册 hooks
 │   ├── session-start.sh         # 向代理注册 session
 │   └── user-prompt-submit.sh    # 显示当前等级
-├── skills/                      # /smoke、/redbull、/think-level、model-steer
+├── skills/                      # /smoke、/redbull、/think-level
 ├── commands/                    # 斜杠命令定义
-├── proxy.py                     # 核心代理
-├── config/default-config.json
+├── proxy.py                     # 核心代理（fallback + 错误分类）
+├── config/default-config.json   # 默认配置
 ├── ui/dashboard.html            # Dashboard 单页应用
 └── install.sh                   # 一键安装
 ```
 
 核心设计：
 
-- **插件隔离** — MSC 只在显式加载时生效（`--plugin-dir`），普通 `claude` 看不到任何 MSC 内容
-- **System prompt 注入** — 路由规则通过 `--append-system-prompt-file` 注入，不侵入 CLAUDE.md
-- **动态配置** — Dashboard 改配置 → proxy 重新生成路由 prompt → 下次 session 自动生效
-- **签名修补** — GLM 的空 thinking-block 签名用合法占位符替换，跨模型会话无缝切换
+- **插件隔离** — MSC 只在 `cr` 启动时加载，普通 `claude` 不受影响
+- **零重试 fallback** — MSC 不重试，纯 fail-fast 降级，避免与 Claude Code 内置重试叠加
+- **错误码优先** — per-provider 业务错误码覆盖 HTTP 状态码分类，确保 GLM 1234（网络错误，HTTP 400）也能正确触发 fallback
+- **签名修补** — GLM 的空 thinking-block 签名用合法占位符替换，跨模型会话无缝
 
 ## Contact
 

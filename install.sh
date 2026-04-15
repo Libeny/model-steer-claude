@@ -89,14 +89,16 @@ do_install() {
     echo "    1. source $SHELL_RC"
     echo "    2. cr           ← 启动 Claude Code (通过 MSC 路由)"
     echo "    3. crd          ← 打开 Dashboard"
+    echo "    4. crq          ← 查看模型额度状态"
     echo ""
     echo "  也可以直接用 Claude Code 加载插件:"
     echo "    claude --plugin-dir ~/.claude/plugins/msc"
     echo ""
-    echo "  命令 (仅在 cr 模式下可用):"
-    echo "    /smoke          ← 切到最便宜模型"
-    echo "    /redbull         ← 切到最强模型"
-    echo "    /think-level N  ← 指定模型等级"
+    echo "  命令:"
+    echo "    cr                ← 启动 Claude Code (自动 fallback 保障)"
+    echo "    cr --route        ← 启动 + AI 自主路由 (根据任务切换模型)"
+    echo "    crd               ← 打开 Dashboard"
+    echo "    crq               ← 查看模型额度"
     echo ""
 }
 
@@ -186,21 +188,93 @@ PYEOF
 # msc: Claude Code intelligent model router (https://github.com/Libeny/model-steer-claude)
 cr() {
   [ "$1" = "dashboard" ] && { crd; return; }
+  [ "$1" = "quota" ] && { crq; return; }
   # Start MSC proxy if not running
   curl --noproxy '*' -s http://127.0.0.1:3457/ &>/dev/null || {
     PYTHONUNBUFFERED=1 nohup python3 ~/.claude/plugins/msc/proxy.py >> /tmp/msc-proxy.log 2>&1 &
     for i in {1..20}; do curl --noproxy '*' -s http://127.0.0.1:3457/ &>/dev/null && break; sleep 0.2; done
   }
+  # Check if --route flag is present for AI self-routing mode
+  local route_flag=""
+  local args=()
+  for arg in "$@"; do
+    if [ "$arg" = "--route" ]; then
+      route_flag="1"
+    else
+      args+=("$arg")
+    fi
+  done
   unset ANTHROPIC_AUTH_TOKEN
-  MSC_ENABLED=1 NO_PROXY=127.0.0.1 ANTHROPIC_BASE_URL=http://127.0.0.1:3457 \
-    claude --plugin-dir ~/.claude/plugins/msc \
-    --append-system-prompt-file ~/.msc/routing-prompt.md "$@"
+  local cmd="MSC_ENABLED=1 NO_PROXY=127.0.0.1 ANTHROPIC_BASE_URL=http://127.0.0.1:3457 \
+    claude --plugin-dir ~/.claude/plugins/msc"
+  if [ -n "$route_flag" ]; then
+    cmd="$cmd --append-system-prompt-file ~/.msc/routing-prompt.md"
+  fi
+  eval "$cmd \"\${args[@]}\""
 }
 crd() {
   curl --noproxy '*' -s http://127.0.0.1:3457/ &>/dev/null || {
     echo "[msc] Proxy not running. Start with: cr"; return 1
   }
   open "http://127.0.0.1:3457/ui"
+}
+crq() {
+  curl --noproxy '*' -s http://127.0.0.1:3457/ &>/dev/null || {
+    echo "[msc] Proxy not running. Start with: cr"; return 1
+  }
+  local data
+  data=$(curl --noproxy '*' -s http://127.0.0.1:3457/api/quota)
+  if [ -z "$data" ]; then
+    echo "[msc] Failed to fetch quota"; return 1
+  fi
+  python3 -c "
+import json, sys
+from datetime import datetime
+
+data = json.loads('''$data''')
+
+# Anthropic quota
+anthropic = data.get('anthropic')
+if anthropic:
+    sub = anthropic.get('subscription', 'unknown')
+    print(f'  Claude Subscription: {sub}')
+    print()
+    for tier in anthropic.get('tiers', []):
+        label = tier['label']
+        pct = tier['utilization']
+        remaining = tier['remaining']
+        resets = tier.get('resets_at', '')
+        bar_len = 20
+        filled = int(pct / 100 * bar_len)
+        bar = '█' * filled + '░' * (bar_len - filled)
+        status = 'EXHAUSTED' if tier['exhausted'] else f'{remaining}% left'
+        reset_str = ''
+        if resets:
+            try:
+                dt = datetime.fromisoformat(resets.replace('Z', '+00:00'))
+                now = datetime.now(dt.tzinfo)
+                diff = dt - now
+                hours = int(diff.total_seconds() // 3600)
+                mins = int((diff.total_seconds() % 3600) // 60)
+                reset_str = f'  resets in {hours}h{mins}m' if hours > 0 else f'  resets in {mins}m'
+            except Exception:
+                reset_str = f'  resets: {resets}'
+        print(f'  {label:10s} [{bar}] {pct:3d}%  {status}{reset_str}')
+else:
+    print('  Claude: not logged in or quota unavailable')
+
+# Custom providers
+providers = data.get('providers', {})
+if providers:
+    print()
+    for name, info in providers.items():
+        status = info.get('status', 'unknown')
+        model = info.get('model', '')
+        icon = {'ok': '✓', 'fail': '✗', 'warn': '⚠'}.get(status, '?')
+        print(f'  {icon} {name}: {model} ({status})')
+        if info.get('error'):
+            print(f'    {info[\"error\"]}')
+"
 }
 SHELL_EOF
 

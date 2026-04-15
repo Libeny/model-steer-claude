@@ -1,7 +1,7 @@
 {
   "port": 3457,
   "proxy": "http://127.0.0.1:7897",
-  "default_level": 1,
+  "default_level": 2,
   "levels": {
     "1": {"name": "glm", "provider": "glm", "model": "glm-5.1", "context": "非工作探索期闲聊、简单 Q&A、定时任务、异步任务回调"},
     "2": {"name": "sonnet", "provider": "anthropic", "model": "claude-sonnet-4-6", "context": "代码开发、需求评审、测试工作、调试、重构"},
@@ -11,5 +11,22 @@
     "glm": {"url": "https://open.bigmodel.cn/api/anthropic/v1/messages", "key": "YOUR_GLM_KEY_HERE"},
     "anthropic": {"url": "https://api.anthropic.com", "passthrough_auth": true}
   },
-  "retry": {"max_attempts": 3, "interval_seconds": 2}
+  "fallback": {
+    "error_rules": {
+      "_default": {
+        "retriable_http": [429, 500, 502, 503, 529],
+        "fatal_http": [400, 401, 403, 404],
+        "business_code_path": "",
+        "retriable_codes": [],
+        "fatal_codes": []
+      },
+      "glm": {
+        "business_code_path": "error.code",
+        "retriable_codes": ["1200", "1230", "1234", "1302", "1303", "1305", "1312"],
+        "fatal_codes": ["1301", "1304", "1308", "1309", "1310", "1311", "1313",
+                        "1000", "1001", "1002", "1003", "1004",
+                        "1110", "1111", "1112", "1113", "1121"]
+      }
+    }
+  }
 }

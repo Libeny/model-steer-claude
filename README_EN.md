@@ -1,8 +1,11 @@
 <p align="center">
   <img src="docs/sailor.png" width="180" alt="MSC Captain">
-  <h1 align="center">Model Steer Claude (MSC)</h1>
+  <h1 align="center">NB-Claude</h1>
   <p align="center">
-    <strong>Let Claude Code take the helm</strong>
+    <strong>Never Break Your Flow</strong>
+  </p>
+  <p align="center">
+    <em>High-availability model proxy for Claude Code, designed for AI digital workers & AI-Coding clusters</em>
   </p>
   <p align="center">
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
@@ -14,32 +17,87 @@
 
 ---
 
-## Why
+## Why NB-Claude
 
-Like a seasoned captain steering a ship, Claude Code should decide which model fits each task — not burn premium fuel on every mile.
+Claude Code is the most powerful coding agent today, but it has one hard limit: **when quota runs out, work stops**.
 
-As AI workers join daily workflows, two problems emerge:
+For a human that's tolerable — wait a bit, try again. But for **AI digital workers**, it's critical: a 429 breaks the entire task chain, downstream tasks stall, and nobody's there to manually restart.
 
-1. **Cost** — Every message burns the same premium tokens, whether it's "where's that file?" or "design a distributed system"
-2. **Right tool for the job** — Architecture decisions go to Opus, implementation to Sonnet, frontend UI to vision-capable models, routine tasks to fast cheap models
+NB-Claude fixes this. It's a local proxy between Claude Code and model APIs, ensuring **a model is always available**:
 
-MSC gives Claude Code the helm. It picks the right model for each task — cheap models for routine work, powerful models for complex problems. When orchestrating sub-agents, each one gets the model that fits its specialty. Cost management and expertise allocation, handled by the AI itself.
+| Scenario | Without NB-Claude | With NB-Claude |
+|----------|-------------------|----------------|
+| Sonnet quota exhausted | Task interrupted, wait for reset | Auto-switch to GLM, seamless |
+| API returns 500 | Claude Code exits | Auto-retry next provider |
+| GLM temporary rate limit | Direct error | Auto-degrade to next available model |
+| Primary model persistently down | Manual intervention | Circuit Breaker auto-bans, 5-min probe recovery |
+
+MSC fixes this. It's a local proxy between Claude Code and model APIs, providing **three layers of protection**:
+
+| Layer | Capability | Description |
+|-------|-----------|-------------|
+| **Layer 1: Never Fallback** | Automatic failover | Sonnet 429? Switch to GLM. GLM down? Continue down the chain. Smart error code classification avoids wasted requests |
+| **Layer 2: Task Routing** | AI-driven model switching | With `--route`, the AI picks the right model per task — cheap model for chat, Sonnet for code, Opus for architecture |
+| **Layer 3: Agent Orchestration** | Sub-agent model assignment | Each agent uses the model best suited for its task (planned) |
 
 ## How it works
 
 ```
-User → Claude Code → MSC Proxy (localhost:3457) → GLM / Sonnet / Opus
-                         ↑
-              AI reads routing prompt,
-              runs curl to switch level
-              before responding
+                          ┌─ Sonnet (Anthropic)  ── 429/500? ──┐
+User → Claude Code → MSC ─┤                                       ├→ Never break
+   Proxy (local)           └─ GLM / DeepSeek / Moonshot ... ─────┘
 ```
 
-- **Level 1** — cheap model (GLM): chat, Q&A, async callbacks
-- **Level 2** — mid model (Sonnet): code, review, testing, debugging
-- **Level 3** — top model (Opus): architecture, deep analysis
+### Layer 1: Never Fallback (enabled by default)
 
-The routing rules come from config, editable via Dashboard. The proxy patches thinking-block signatures so cross-model sessions don't break.
+MSC proxies all API requests. When the primary model is unavailable, it automatically falls back:
+
+```
+Sonnet → GLM-5.1 → other available models
+```
+
+**Smart error classification** (not just HTTP status codes):
+
+| Scenario | Action |
+|----------|--------|
+| Anthropic 429 (quota exhausted) | Fallback |
+| Anthropic 500/503 (service error) | Fallback |
+| GLM 1302/1303/1305 (temporary rate limit) | Fallback |
+| GLM 1301 (content safety) | **No fallback** (same content triggers on any model) |
+| GLM 1304/1308 (quota depleted) | **No fallback** (mark provider as unavailable) |
+| GLM 1234 (network error, HTTP 400) | Fallback |
+
+Error rules are configurable per provider. See `fallback.error_rules` in config.
+
+### Layer 2: Task Routing (optional, `cr --route`)
+
+By default `cr` only provides fallback protection. With `--route`, MSC injects routing rules into the system prompt and the AI switches models based on task complexity:
+
+```
+"Where's that file?"        → GLM (cheap, fast)
+"Write unit tests"          → Sonnet (strong coding)
+"Design microservice arch"  → Opus (deep reasoning)
+```
+
+Levels, models, and contexts are fully configurable via Dashboard with drag-and-drop ordering.
+
+### Quota Check
+
+```bash
+crq    # Check quota status and reset times for all models
+```
+
+Example output:
+
+```
+  Claude Subscription: pro
+
+  5h         [█████████░░░░░░░░░░░]  45%  55% left    resets in 2h30m
+  7d         [██████████████░░░░░░]  72%  28% left    resets in 6d12h
+  7d Sonnet  [█████████████████░░░]  88%  12% left    resets in 6d12h
+
+  ✓ glm: glm-5.1 (ok)
+```
 
 ## Quick start
 
@@ -53,31 +111,32 @@ vim ~/.msc/config.json
 
 # Source shell, then go
 source ~/.zshrc
-cr                    # Launch Claude Code through MSC
+cr                    # Launch with fallback protection
+cr --route            # Launch with fallback + AI routing
 crd                   # Open Dashboard
+crq                   # Check quota
 ```
 
-## Usage
-
-### CLI mode (`cr`)
-
-`cr` wraps `claude` with the MSC plugin and routing prompt:
+## CLI commands
 
 ```bash
-cr                          # Interactive session
+cr                          # Interactive session (fallback only)
+cr --route                  # Interactive session (fallback + AI routing)
 cr -p "explain this file"   # Print mode
 cr --resume <session-id>    # Resume a session
+crd                         # Open Dashboard
+crq                         # Check quota status
 ```
 
-Inside a session, Claude auto-switches levels. You can also force it:
+In-session commands:
 
 | Command | Effect |
 |---------|--------|
 | `/smoke` | Drop to cheapest model |
 | `/redbull` | Switch to most powerful model |
-| `/think-level N` | Switch to level N (1/2/3) |
+| `/think-level N` | Switch to level N |
 
-### Agent SDK mode
+## Agent SDK mode
 
 ```python
 from claude_agent_sdk import query, ClaudeAgentOptions
@@ -104,33 +163,44 @@ Same plugin, same hooks, same routing — identical behavior to `cr`.
 `crd` opens a local web UI at `http://localhost:3457/ui`:
 
 - **Model config** — add/remove/reorder models, set routing context per level
-- **Usage analytics** — token breakdown (input/output/cache), cost tracking, model distribution
+- **Usage analytics** — token breakdown, cost tracking, model distribution
 - **CoT viewer** — browse conversation history across sessions
 
 ## Config
 
-`~/.msc/config.json` — all settings in one file:
+`~/.msc/config.json`:
 
 ```json
 {
+  "default_level": 2,
   "levels": {
-    "1": {
-      "name": "glm",
-      "provider": "glm",
-      "model": "glm-5.1",
-      "context": "chat, Q&A, scheduled tasks"
-    },
-    "2": {
-      "name": "sonnet",
-      "provider": "anthropic",
-      "model": "claude-sonnet-4-6",
-      "context": "coding, review, testing, debugging"
+    "1": {"name": "glm", "provider": "glm", "model": "glm-5.1", "context": "chat, Q&A"},
+    "2": {"name": "sonnet", "provider": "anthropic", "model": "claude-sonnet-4-6", "context": "coding, testing"},
+    "3": {"name": "opus", "provider": "anthropic", "model": "claude-opus-4-6", "context": "architecture"}
+  },
+  "providers": {
+    "glm": {"url": "https://open.bigmodel.cn/api/anthropic/v1/messages", "key": "..."},
+    "anthropic": {"url": "https://api.anthropic.com", "passthrough_auth": true}
+  },
+  "fallback": {
+    "error_rules": {
+      "_default": {
+        "retriable_http": [429, 500, 502, 503, 529],
+        "fatal_http": [400, 401, 403, 404]
+      },
+      "glm": {
+        "business_code_path": "error.code",
+        "retriable_codes": ["1200", "1230", "1234", "1302", "1303", "1305", "1312"],
+        "fatal_codes": ["1301", "1304", "1308", "1309", "1310", "1311", "1313",
+                        "1000", "1001", "1002", "1003", "1004",
+                        "1110", "1111", "1112", "1113", "1121"]
+      }
     }
   }
 }
 ```
 
-The `context` field drives routing — change it in Dashboard, the routing prompt regenerates automatically.
+`fallback.error_rules` supports any model provider: `_default` defines universal rules, per-provider keys define specific business error codes. Adding a new provider is just adding a new section.
 
 ## Architecture
 
@@ -138,23 +208,28 @@ The `context` field drives routing — change it in Dashboard, the routing promp
 model-steer-claude/
 ├── .claude-plugin/plugin.json   # Plugin manifest
 ├── hooks/
-│   ├── hooks.json               # Auto-registered hooks (SessionStart, UserPromptSubmit)
+│   ├── hooks.json               # Auto-registered hooks
 │   ├── session-start.sh         # Register session with proxy
 │   └── user-prompt-submit.sh    # Show current level
-├── skills/                      # /smoke, /redbull, /think-level, model-steer
+├── skills/                      # /smoke, /redbull, /think-level
 ├── commands/                    # Slash command definitions
-├── proxy.py                     # Core proxy (~1100 lines)
-├── config/default-config.json
+├── proxy.py                     # Core proxy (fallback + error classification)
+├── config/default-config.json   # Default config
 ├── ui/dashboard.html            # Dashboard SPA
 └── install.sh                   # One-command setup
 ```
 
 Key design decisions:
 
-- **Plugin isolation** — MSC only loads when explicitly requested (`--plugin-dir`). Normal `claude` sees nothing.
-- **System prompt injection** — Routing rules are appended via `--append-system-prompt-file`, not baked into CLAUDE.md.
-- **Dynamic config** — Dashboard edits config, proxy regenerates `~/.msc/routing-prompt.md`, next session picks it up.
-- **Signature patching** — GLM's empty thinking-block signatures are replaced with a valid placeholder, enabling seamless cross-model sessions.
+- **Plugin isolation** — MSC only loads via `cr`. Normal `claude` is unaffected.
+- **Zero-retry fallback** — MSC doesn't retry, pure fail-fast fallback. Avoids stacking with Claude Code's built-in retry.
+- **Error code priority** — Per-provider business error codes override HTTP status classification. GLM 1234 (network error, HTTP 400) correctly triggers fallback.
+- **Signature patching** — GLM's empty thinking-block signatures are replaced with a valid placeholder for seamless cross-model sessions.
+
+## Contact
+
+- Email: libeny0526@gmail.com
+- WeChat: BiothaLMY
 
 ## License
 
