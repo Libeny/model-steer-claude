@@ -32,58 +32,102 @@ NB-Claude 解决这个问题。它是一个本地代理，架在 Claude Code 和
 | GLM 临时限流 | 直接报错 | 自动降级到其他可用模型 |
 | 主模型持续不可用 | 人工介入 | Circuit Breaker 自动熔断，5 分钟探测恢复 |
 
-5 小时窗口耗尽、7 天 Sonnet 额度见底、API 返回 429 —— 你只能等，工作流直接中断。
+## 三层架构
 
-MSC 解决这个问题。它是一个本地代理，架在 Claude Code 和模型 API 之间，提供 **三层保障**：
-
-| 层级 | 能力 | 说明 |
-|------|------|------|
-| **第一层：Never Fallback** | 自动故障转移 | Sonnet 429？自动切 GLM。GLM 也不行？按配置链路继续降级。错误码智能分类，不该重试的（内容安全）不浪费请求 |
-| **第二层：任务路由** | AI 自主切换模型 | 开启 `--route` 后，AI 根据任务复杂度自动选模型 —— 闲聊走便宜模型，编码走 Sonnet，架构设计走 Opus |
-| **第三层：Agent 编排** | Sub-agent 模型分配 | 多 Agent 协作时，每个 Agent 可以使用最适合其任务的模型（规划中） |
-
-## 工作原理
+NB-Claude 提供三个逐层增强的能力，按需启用：
 
 ```
-                          ┌─ Sonnet (Anthropic)  ── 429/500? ──┐
-用户 → Claude Code → MSC ─┤                                       ├→ 永不中断
-   Proxy (本地代理)        └─ GLM / DeepSeek / Moonshine ... ────┘
+┌──────────────────────────────────────────────────┐
+│  第三层：Agent 编排（规划中）                        │
+│  多 Agent 协作时，每个 Agent 分配最适配的模型          │
+├──────────────────────────────────────────────────┤
+│  第二层：任务路由（cr --route 开启）                  │
+│  你定义规则，AI 按规则自动切换模型                      │
+├──────────────────────────────────────────────────┤
+│  第一层：Never Fallback（默认开启）                   │
+│  主模型不可用时，自动降级到下一个可用模型                │
+└──────────────────────────────────────────────────┘
 ```
 
-### 第一层：Never Fallback（默认开启）
+---
 
-MSC 代理所有 API 请求。当主模型不可用时，自动按配置链路降级：
+## 第一层：Never Fallback（默认开启）
+
+```
+                          ┌─ Sonnet ── 429/500? ──┐
+用户 → Claude Code → 代理 ─┤                        ├→ 永不中断
+                          └─ GLM / DeepSeek / ... ─┘
+```
+
+所有 API 请求经过本地代理。当主模型不可用时，自动按你配置的链路降级：
 
 ```
 Sonnet → GLM-5.1 → 其他可用模型
 ```
 
-**智能错误分类**（不只看 HTTP 状态码）：
+### 智能错误分类
 
-| 场景 | 处理方式 |
-|------|---------|
-| Anthropic 429（额度耗尽） | 自动 fallback |
-| Anthropic 500/503（服务异常） | 自动 fallback |
-| GLM 1302/1303/1305（临时限流） | 自动 fallback |
-| GLM 1301（内容安全审核） | **不 fallback**（换模型也会触发） |
-| GLM 1304/1308（配额耗尽） | **不 fallback**（标记 provider 不可用） |
-| GLM 1234（网络错误） | 自动 fallback |
+不只是看 HTTP 状态码，还解析模型厂商的业务错误码，精准判断该不该 fallback：
 
-错误分类规则可配置，支持任意模型厂商的业务错误码。详见 `~/.msc/config.json` 中的 `fallback.error_rules`。
+| 错误 | 来源 | 处理 |
+|------|------|------|
+| 429 / 500 / 503 | Anthropic | **fallback** — 额度耗尽或服务异常 |
+| 1302 / 1303 / 1305 / 1312 | GLM 临时限流 | **fallback** — 短期可恢复 |
+| 1234 | GLM 网络错误 | **fallback** — 服务端网络问题 |
+| 1301 | GLM 内容安全 | **不 fallback** — 换模型同样会触发 |
+| 1304 / 1308 / GLM 配额耗尽 | **不 fallback** — 熔断该 provider |
 
-### 第二层：任务路由（可选，`cr --route`）
+错误规则完全可配置。`_default` 定义通用规则，per-provider 键定义厂商特定错误码。添加新厂商只需加一段配置。
 
-默认 `cr` 只做 fallback 保障。加 `--route` 后，MSC 注入路由规则到 system prompt，AI 会根据任务复杂度自动切换模型：
+### Circuit Breaker（熔断器）
+
+当检测到配额耗尽（GLM 1304/1308、Anthropic 429 + quota API 确认），立即熔断该 provider：
+
+- **熔断状态**：后续请求直接跳过该 provider，零延迟
+- **自动恢复**：每 5 分钟探测一次，provider 恢复后自动解除熔断
+- **Dashboard 可视**：实时查看哪些 provider 被熔断、原因、何时被熔断
+
+---
+
+## 第二层：任务路由（`cr --route` 开启）
+
+**你定义规则，AI 按规则自动切换模型。**
+
+默认 `cr` 只做 fallback 保障。加 `--route` 后，代理将路由规则注入 system prompt，AI 在每次回复前根据任务类型自动选择最合适的模型。
+
+### 工作方式
 
 ```
-"这个文件在哪？"     → GLM（便宜快速）
-"帮我写个单元测试"   → Sonnet（编码强）
-"设计微服务架构"     → Opus（深度推理）
+用户提问 → AI 读取路由规则 → 判断任务类型 → curl 切换到对应等级 → 用该模型回答
 ```
 
-等级数量、模型、用途完全在 Dashboard 上配置，拖拽排序。
+### 规则完全由你定义
 
-### 额度查看
+在 Dashboard 上为每个模型等级写**路由场景描述**，AI 根据这些描述做决策：
+
+| 等级 | 模型 | 路由场景描述 | 示例任务 |
+|------|------|------------|---------|
+| 1 | GLM-5.1 | 闲聊、简单 Q&A、文件查找、定时任务 | "这个文件在哪？" |
+| 2 | Sonnet | 代码开发、需求评审、测试、调试、重构 | "帮我写个单元测试" |
+| 3 | Opus | 架构设计、深度代码审计、系统级决策 | "设计微服务架构" |
+| N | 任意模型 | 你定义的场景 | 前端 UI 用视觉模型... |
+
+**灵活之处**：
+
+- 等级数量不限，模型不限 — 想加 DeepSeek、Moonshot、Qwen 随时加
+- 每个等级的**路由场景**自由填写 — "定时任务和异步回调"、"前端 UI 开发"、"数据分析"...
+- 拖拽排序调整优先级，保存后下次 session 立即生效
+- 也支持手动切换：`/smoke`（最便宜）、`/redbull`（最强）、`/think-level N`
+
+---
+
+## 第三层：Agent 编排（规划中）
+
+多 Agent 协作场景下，每个 sub-agent 可以使用最适合其任务的模型。例如：架构设计 Agent 用 Opus，编码 Agent 用 Sonnet，测试 Agent 用快速模型。与 Claude Code Agent SDK 深度集成。
+
+---
+
+## 额度查看
 
 ```bash
 crq    # 查看当前所有模型的额度状态和重置时间
@@ -101,6 +145,10 @@ crq    # 查看当前所有模型的额度状态和重置时间
   ✓ glm: glm-5.1 (ok)
 ```
 
+额度信息实时从 Anthropic usage API 获取，帮你合理安排工作时间窗口。
+
+---
+
 ## 快速开始
 
 ```bash
@@ -114,7 +162,7 @@ vim ~/.msc/config.json
 # 加载 shell 函数
 source ~/.zshrc
 cr                    # 启动 Claude Code（自动 fallback 保障）
-cr --route            # 启动 + AI 自主路由
+cr --route            # 启动 + AI 按规则路由
 crd                   # 打开 Dashboard
 crq                   # 查看模型额度
 ```
@@ -123,14 +171,14 @@ crq                   # 查看模型额度
 
 ```bash
 cr                          # 交互式会话（仅 fallback 保障）
-cr --route                  # 交互式会话（fallback + AI 路由）
+cr --route                  # 交互式会话（fallback + AI 按规则路由）
 cr -p "解释这个文件"         # 单次输出
 cr --resume <session-id>    # 恢复会话
 crd                         # 打开 Dashboard
 crq                         # 查看额度状态
 ```
 
-会话内命令：
+会话内命令（`--route` 模式下可用）：
 
 | 命令 | 效果 |
 |------|------|
@@ -181,6 +229,11 @@ async for msg in query(
 - **模型用量分布** — 各模型 token 占比
 - **项目用量排行** — 按项目聚合
 
+### Fallback 保护
+
+- **Circuit Breaker 状态** — 实时查看哪些 provider 被熔断
+- **Fallback 事件流** — 每次降级的完整记录（从哪个模型、到哪个模型、原因、时间）
+
 ## 配置
 
 `~/.msc/config.json`：
@@ -189,9 +242,9 @@ async for msg in query(
 {
   "default_level": 2,
   "levels": {
-    "1": {"name": "glm", "provider": "glm", "model": "glm-5.1", "context": "闲聊、Q&A"},
-    "2": {"name": "sonnet", "provider": "anthropic", "model": "claude-sonnet-4-6", "context": "编码、测试"},
-    "3": {"name": "opus", "provider": "anthropic", "model": "claude-opus-4-6", "context": "架构设计"}
+    "1": {"name": "glm", "provider": "glm", "model": "glm-5.1", "context": "闲聊、Q&A、文件查找"},
+    "2": {"name": "sonnet", "provider": "anthropic", "model": "claude-sonnet-4-6", "context": "编码、测试、调试"},
+    "3": {"name": "opus", "provider": "anthropic", "model": "claude-opus-4-6", "context": "架构设计、深度审计"}
   },
   "providers": {
     "glm": {"url": "https://open.bigmodel.cn/api/anthropic/v1/messages", "key": "..."},
@@ -215,7 +268,15 @@ async for msg in query(
 }
 ```
 
-`fallback.error_rules` 支持任意模型厂商：`_default` 定义通用规则，per-provider 键定义特定业务错误码。添加新厂商时，只需增加对应的 provider 配置段。
+关键配置项：
+
+| 字段 | 说明 |
+|------|------|
+| `levels.N.context` | 路由场景描述 — AI 根据此描述判断何时切换到该模型 |
+| `providers` | 模型厂商配置 — 支持任何兼容 Anthropic API 格式的接口 |
+| `fallback.error_rules` | 错误分类规则 — `_default` 为通用规则，按 provider 名覆盖 |
+| `fallback.error_rules.*.retriable_codes` | 触发 fallback 的业务错误码 |
+| `fallback.error_rules.*.fatal_codes` | 不触发 fallback、直接返回的错误码 |
 
 ## 架构
 
@@ -228,7 +289,7 @@ model-steer-claude/
 │   └── user-prompt-submit.sh    # 显示当前等级
 ├── skills/                      # /smoke、/redbull、/think-level
 ├── commands/                    # 斜杠命令定义
-├── proxy.py                     # 核心代理（fallback + 错误分类）
+├── proxy.py                     # 核心代理（fallback + 错误分类 + 熔断）
 ├── config/default-config.json   # 默认配置
 ├── ui/dashboard.html            # Dashboard 单页应用
 └── install.sh                   # 一键安装
@@ -236,10 +297,11 @@ model-steer-claude/
 
 核心设计：
 
-- **插件隔离** — MSC 只在 `cr` 启动时加载，普通 `claude` 不受影响
-- **零重试 fallback** — MSC 不重试，纯 fail-fast 降级，避免与 Claude Code 内置重试叠加
-- **错误码优先** — per-provider 业务错误码覆盖 HTTP 状态码分类，确保 GLM 1234（网络错误，HTTP 400）也能正确触发 fallback
-- **签名修补** — GLM 的空 thinking-block 签名用合法占位符替换，跨模型会话无缝
+- **插件隔离** — NB-Claude 只在 `cr` 启动时加载，普通 `claude` 不受影响
+- **零重试 fallback** — 纯 fail-fast 降级，避免与 Claude Code 内置重试叠加（3 模型 × 10 重试 = 90 次请求）
+- **错误码优先** — per-provider 业务错误码覆盖 HTTP 状态码，GLM 1234（HTTP 400）也能正确触发 fallback
+- **规则驱动路由** — 路由决策由你定义的场景描述驱动，不是硬编码，改配置即时生效
+- **签名修补** — 跨模型会话时自动修补 thinking-block 签名，无缝切换
 
 ## Contact
 
