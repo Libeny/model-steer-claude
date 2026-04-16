@@ -158,16 +158,28 @@ def mask_key(key):
 
 
 def build_route_levels(cfg):
-    """Build {int_level: {name, provider, model, label, context}} from config."""
+    """Build {int_level: {name, model, label, context, providers}} from config.
+
+    Supports two formats:
+      New: "providers": [{"provider": "glm", "role": "primary"}, ...]
+      Old: "provider": "glm"  (auto-converted to single-element providers list)
+    """
     levels = {}
     for k, v in cfg["levels"].items():
         lvl = int(k)
+        # Normalize providers: new array format or legacy single string
+        if "providers" in v:
+            providers = v["providers"]
+        else:
+            providers = [{"provider": v["provider"], "role": "primary"}]
         levels[lvl] = {
             "name": v["name"],
-            "provider": v["provider"],
+            "providers": providers,
             "model": v["model"],
             "label": v["name"].upper(),
             "context": v.get("context", ""),
+            # Backward compat: first provider as default
+            "provider": providers[0]["provider"],
         }
     return levels
 
@@ -674,10 +686,11 @@ def _cb_probe_loop():
                 provider_cfg = Handler.config.get("providers", {}).get(provider_name)
                 if not provider_cfg:
                     continue
-                # Find a model for this provider to test with
+                # Find a model for this provider to test with (check providers pool)
                 test_model = ""
                 for lvl_info in Handler.route_levels.values():
-                    if lvl_info.get("provider") == provider_name:
+                    pool = lvl_info.get("providers", [{"provider": lvl_info.get("provider", ""), "role": "primary"}])
+                    if any(p["provider"] == provider_name for p in pool):
                         test_model = lvl_info["model"]
                         break
                 if not test_model:
@@ -932,28 +945,43 @@ def _check_custom_api_health(provider_name, provider_cfg, model, clients):
 
 
 def run_health_check(config, route_levels, clients):
-    """Run health check on all configured models."""
+    """Run health check on all configured models (all providers per level)."""
     import datetime
     results = {}
     for level_str, level_info in sorted(route_levels.items()):
         level_int = int(level_str) if isinstance(level_str, str) else level_str
-        provider_name = level_info.get("provider", "")
         model = level_info.get("model", "")
         label = level_info.get("label", "")
+        pool_providers = level_info.get("providers", [{"provider": level_info.get("provider", ""), "role": "primary"}])
 
-        if provider_name == "anthropic" or level_info.get("passthrough_auth"):
-            check = _check_anthropic_health()
-        else:
-            provider_cfg = config.get("providers", {}).get(provider_name, {})
-            check = _check_custom_api_health(provider_name, provider_cfg, model, clients)
+        # Check each provider in the pool
+        provider_results = []
+        overall_status = "ok"
+        for pool_entry in pool_providers:
+            provider_name = pool_entry["provider"]
+            if provider_name == "anthropic" or level_info.get("passthrough_auth"):
+                check = _check_anthropic_health()
+            else:
+                provider_cfg = config.get("providers", {}).get(provider_name, {})
+                check = _check_custom_api_health(provider_name, provider_cfg, model, clients)
+            check["provider"] = provider_name
+            check["role"] = pool_entry.get("role", "primary")
+            provider_results.append(check)
+            if check["status"] != "ok":
+                overall_status = check["status"]
 
-        check["checked_at"] = datetime.datetime.now().isoformat()
-        check["model"] = model
-        check["label"] = label
-        check["provider"] = provider_name
-        results[level_int] = check
-        status_icon = {"ok": "✓", "fail": "✗", "warn": "⚠", "unknown": "?"}.get(check["status"], "?")
-        print(f"[msc] Health {status_icon} Level {level_int} ({label}): {check['status']} {check.get('error','')}", flush=True)
+        results[level_int] = {
+            "status": overall_status,
+            "model": model,
+            "label": label,
+            "providers": provider_results,
+            "checked_at": datetime.datetime.now().isoformat(),
+            # Backward compat
+            "provider": pool_providers[0]["provider"],
+        }
+        for pr in provider_results:
+            status_icon = {"ok": "✓", "fail": "✗", "warn": "⚠", "unknown": "?"}.get(pr["status"], "?")
+            print(f"[msc] Health {status_icon} Level {level_int} ({label}/{pr['provider']}): {pr['status']} {pr.get('error','')}", flush=True)
 
     return results
 
@@ -1026,7 +1054,10 @@ def classify_error(status_code, resp_body, provider_name, fallback_cfg):
     """
     rules = fallback_cfg.get("error_rules", {})
     default_rules = rules.get("_default", {})
+    # glm-qianfan etc. fall back to "glm" rules if no specific rules exist
     provider_rules = rules.get(provider_name, {})
+    if not provider_rules and provider_name.startswith("glm-"):
+        provider_rules = rules.get("glm", {})
 
     retriable_http = set(provider_rules.get("retriable_http",
                             default_rules.get("retriable_http", [429, 500, 502, 503, 529])))
@@ -1821,39 +1852,44 @@ class Handler(BaseHTTPRequestHandler):
         tried_levels = []  # track failed attempts for logging
         for try_level in fallback_order:
             level_info = self.route_levels[try_level]
-            provider_name = level_info["provider"]
+            pool_providers = level_info.get("providers", [{"provider": level_info["provider"], "role": "primary"}])
 
-            # Circuit breaker: skip banned providers
-            if cb_is_banned(provider_name):
-                reason = cb_status().get(provider_name, {}).get('reason', '')
-                print(f"[msc] CB skip: L{try_level} ({level_info['label']}) — banned: {reason}", flush=True)
-                tried_levels.append((try_level, level_info['label'], provider_name, f"CB banned: {reason}"))
-                continue
+            # Try providers within this level's pool (primary → backup)
+            for pool_entry in pool_providers:
+                provider_name = pool_entry["provider"]
 
-            provider_cfg = self.config["providers"][provider_name]
-            client = self.clients[provider_name]
+                # Circuit breaker: skip banned providers
+                if cb_is_banned(provider_name):
+                    reason = cb_status().get(provider_name, {}).get('reason', '')
+                    print(f"[msc] CB skip: L{try_level} ({level_info['label']}/{provider_name}) — banned: {reason}", flush=True)
+                    tried_levels.append((try_level, level_info['label'], provider_name, f"CB banned: {reason}"))
+                    continue
 
-            try:
-                self._do_proxy_request(body, try_level, level_info, provider_name, provider_cfg, client, sid)
-                # Success — log any fallbacks that occurred
-                for (fl, flbl, fp, fr) in tried_levels:
-                    _log_fallback(sid, fl, flbl, try_level, level_info['label'], fp, fr)
-                return  # success
-            except ProxyFallbackError as e:
-                last_error = e
-                tried_levels.append((try_level, level_info['label'], provider_name, e.reason))
-                print(f"[msc] Fallback: L{try_level} ({level_info['label']}) → {e.reason}", flush=True)
-                # Ban Anthropic on persistent 429 (quota exhaustion)
-                if provider_name == "anthropic" and "429" in str(e.reason):
-                    quota = _fetch_anthropic_quota()
-                    if quota:
-                        for tier in quota.get("tiers", []):
-                            if tier.get("exhausted"):
-                                cb_ban("anthropic", f"quota exhausted: {tier['label']} {tier['utilization']}%")
-                                break
-                continue  # try next level
-            except ProxyFatalError:
-                return  # response already sent to client
+                provider_cfg = self.config["providers"][provider_name]
+                client = self.clients[provider_name]
+
+                try:
+                    self._do_proxy_request(body, try_level, level_info, provider_name, provider_cfg, client, sid)
+                    # Success — log any fallbacks that occurred
+                    for (fl, flbl, fp, fr) in tried_levels:
+                        _log_fallback(sid, fl, flbl, try_level, level_info['label'], fp, fr)
+                    return  # success
+                except ProxyFallbackError as e:
+                    last_error = e
+                    tried_levels.append((try_level, level_info['label'], provider_name, e.reason))
+                    role = pool_entry.get("role", "?")
+                    print(f"[msc] Fallback: L{try_level} ({level_info['label']}/{provider_name} {role}) → {e.reason}", flush=True)
+                    # Ban Anthropic on persistent 429 (quota exhaustion)
+                    if provider_name == "anthropic" and "429" in str(e.reason):
+                        quota = _fetch_anthropic_quota()
+                        if quota:
+                            for tier in quota.get("tiers", []):
+                                if tier.get("exhausted"):
+                                    cb_ban("anthropic", f"quota exhausted: {tier['label']} {tier['utilization']}%")
+                                    break
+                    continue  # try next provider in pool
+                except ProxyFatalError:
+                    return  # response already sent to client
 
         # All fallbacks exhausted
         print(f"[msc] All fallbacks exhausted: {last_error}", flush=True)
@@ -1864,7 +1900,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _do_proxy_request(self, body, level, level_info, provider_name, provider_cfg, client, sid):
         is_stream = body.get("stream", False)
-        is_glm = provider_name == "glm"
+        is_glm = provider_name == "glm" or provider_name.startswith("glm-")
         url = provider_cfg["url"]
 
         # Build request body and headers

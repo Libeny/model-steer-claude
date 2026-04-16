@@ -346,6 +346,116 @@ a, button, .sidebar-item, .chip, .type-option, .color-dot, .cot-project-item, .c
   flex-direction: column;
   gap: 4px;
 }
+
+/* ═══ Level Pool Container ═══ */
+.level-pool {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  margin: 8px 12px;
+  padding: 12px;
+  transition: border-color var(--transition);
+}
+.level-pool:hover {
+  border-color: var(--border-hover);
+}
+.level-pool.drag-over-pool {
+  border-color: var(--accent);
+  background: var(--accent-light);
+}
+.level-pool-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--border);
+}
+.level-pool-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.level-pool-providers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-height: 60px;
+  padding: 4px 0;
+}
+.level-pool-providers.drop-target {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+  background: var(--accent-light);
+}
+.level-pool-footer {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+/* Provider Card */
+.provider-card {
+  width: 180px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  cursor: grab;
+  transition: all var(--transition);
+  position: relative;
+}
+.provider-card:hover {
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow);
+  transform: translateY(-1px);
+}
+.provider-card.dragging {
+  opacity: 0.35;
+}
+.provider-card .provider-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+.provider-card .provider-health {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-bottom: 6px;
+}
+.provider-card .health-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.provider-card .health-dot.ok { background: var(--success); }
+.provider-card .health-dot.fail { background: var(--destructive); }
+.provider-card .health-dot.unknown { background: var(--text-tertiary); }
+
+/* Role Chips */
+.role-chip {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  letter-spacing: 0.3px;
+}
+.role-chip.primary {
+  background: var(--accent-light);
+  color: var(--accent-dark);
+}
+.role-chip.backup {
+  background: var(--bg);
+  color: var(--text-tertiary);
+  border: 1px solid var(--border);
+}
 .pool-item {
   display: flex;
   align-items: center;
@@ -1055,11 +1165,8 @@ tr:hover td {
           <button class="btn btn-primary btn-small" onclick="openAddModal()">+ 新增模型</button>
         </div>
       </div>
-      <!-- Model levels -->
-      <div class="model-list" id="sorted-list" style="padding:8px"
-        ondragover="handleZoneDragOver(event,'sorted')"
-        ondragleave="handleZoneDragLeave(event,'sorted')"
-        ondrop="handleZoneDrop(event,'sorted')"></div>
+      <!-- Model levels (card pool) -->
+      <div id="level-pools-container" style="padding:4px 0"></div>
       <!-- Pool divider -->
       <div style="padding:0 20px">
         <div style="display:flex;align-items:center;gap:10px;color:var(--text-tertiary);font-size:12px">
@@ -1276,6 +1383,7 @@ tr:hover td {
           <label>快速预设 <span style="font-weight:400;color:var(--text-tertiary)">（选择后自动填充，也可直接手填）</span></label>
           <div class="chips">
             <div class="chip" onclick="applyPreset('glm', this)">GLM (智谱)</div>
+            <div class="chip" onclick="applyPreset('glm-qianfan', this)">千帆 GLM</div>
             <div class="chip" onclick="applyPreset('deepseek', this)">DeepSeek</div>
             <div class="chip" onclick="applyPreset('moonshot', this)">Moonshot</div>
             <div class="chip" onclick="applyPreset('qwen', this)">Qwen (通义)</div>
@@ -1372,6 +1480,67 @@ tr:hover td {
   </div>
 </div>
 
+<!-- ═══ Provider Edit Modal ═══ -->
+<div class="overlay" id="provider-edit-overlay" onclick="if(event.target===this)closeProviderEditModal()">
+  <div class="modal" style="width:480px">
+    <div class="modal-header">
+      <h3 id="pv-edit-title">编辑供应商</h3>
+      <button class="btn-icon" onclick="closeProviderEditModal()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <!-- Preset chips (add mode only) -->
+      <div class="field" id="pv-edit-preset-field">
+        <label>快速预设 <span style="font-weight:400;color:var(--text-tertiary)">（选择后自动填充）</span></label>
+        <div class="chips" id="pv-edit-preset-chips"></div>
+      </div>
+      <div class="field" id="pv-edit-key-field">
+        <label>供应商标识 <span style="font-weight:400;color:var(--text-tertiary)" id="pv-edit-key-hint">（不可修改）</span></label>
+        <input id="pv-edit-key" placeholder="如：glm-qianfan、deepseek">
+      </div>
+      <div class="field">
+        <label>Base URL</label>
+        <input id="pv-edit-url" placeholder="https://open.bigmodel.cn/api/anthropic/v1/messages">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label>API Key</label>
+          <div style="position:relative">
+            <input id="pv-edit-apikey" type="password" placeholder="sk-..." style="padding-right:36px">
+            <button type="button" onclick="togglePvKeyVisibility()"
+              style="position:absolute;right:8px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;padding:4px;color:var(--text-tertiary);display:flex;align-items:center"
+              title="显示/隐藏密钥">
+              <svg class="pv-eye-open" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
+              <svg class="pv-eye-closed" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+                <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/>
+                <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/>
+                <line x1="1" y1="1" x2="23" y2="23"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="field" id="pv-edit-role-field">
+          <label>角色</label>
+          <select id="pv-edit-role">
+            <option value="primary">主 primary</option>
+            <option value="backup">备 backup</option>
+          </select>
+        </div>
+      </div>
+      <div class="field">
+        <label>代理 <span style="font-weight:400;color:var(--text-tertiary)">（可选，留空使用全局代理）</span></label>
+        <input id="pv-edit-proxy" placeholder="http://127.0.0.1:7897">
+      </div>
+    </div>
+    <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn btn-ghost" onclick="closeProviderEditModal()">取消</button>
+      <button class="btn btn-primary" id="pv-edit-submit-btn" onclick="submitProviderEdit()">保存</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1391,6 +1560,7 @@ const PRICE = {
 
 const PRESETS = {
   glm:      { url: 'https://open.bigmodel.cn/api/anthropic/v1/messages',          model: 'glm-5.1',          name: 'glm',      alias: 'cg' },
+  'glm-qianfan': { url: 'https://qianfan.baidubce.com/anthropic/v1/messages',     model: 'glm-5.1',          name: 'glm-qianfan', alias: 'cgq' },
   deepseek: { url: 'https://api.deepseek.com/v1/messages',                        model: 'deepseek-chat',    name: 'deepseek',  alias: 'cd' },
   moonshot: { url: 'https://api.moonshot.cn/v1/messages',                          model: 'moonshot-v1-auto', name: 'moonshot',  alias: 'cm' },
   qwen:     { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/messages',   model: 'qwen-max',        name: 'qwen',      alias: 'cq' }
@@ -1485,7 +1655,7 @@ async function init() {
 // ═══════════════════════════════════════════
 
 function render() {
-  renderSorted();
+  renderLevelPools();
   renderPool();
   // Show dirty indicator
   var isDirty = configSnapshot && JSON.stringify(config) !== configSnapshot;
@@ -1496,8 +1666,37 @@ function render() {
 }
 
 
-function renderSorted() {
-  var el = document.getElementById('sorted-list');
+// Provider name mapping for display
+var PROVIDER_DISPLAY_NAMES = {
+  'glm': '官方 GLM',
+  'glm-qianfan': '千帆 GLM',
+  'anthropic': 'Claude'
+};
+
+function getProviderDisplayName(providerKey) {
+  return PROVIDER_DISPLAY_NAMES[providerKey] || providerKey;
+}
+
+function getProviderTypeLabel(providerKey) {
+  if (providerKey === 'anthropic') return '官方';
+  if (config && config.providers && config.providers[providerKey] && config.providers[providerKey].passthrough_auth) return '官方';
+  return '自定义';
+}
+
+// Normalize providers: if level has single `provider` string, wrap into providers array
+function getLevelProviders(level) {
+  if (level.providers && Array.isArray(level.providers)) {
+    return level.providers;
+  }
+  // Backward compat: single provider string
+  if (level.provider) {
+    return [{ provider: level.provider, role: 'primary' }];
+  }
+  return [];
+}
+
+function renderLevelPools() {
+  var el = document.getElementById('level-pools-container');
   var sorted = getSortedLevels();
   var defaultLevel = config ? config.default_level || 1 : 1;
 
@@ -1510,38 +1709,97 @@ function renderSorted() {
     var levelNum = parseInt(entry[0]);
     var level = entry[1];
     var isDefault = levelNum === defaultLevel;
-    var provLabel = level.provider === 'anthropic' ? '官方' : '自定义';
     var color = level.color || '#c96442';
+    var providers = getLevelProviders(level);
+
+    // Health data per-provider from _health_details
+    var healthDetails = level._health_details || {};
 
     var defaultBadge = isDefault ? '<span style="font-size:10px;padding:1px 6px;border-radius:4px;background:#2d8a5618;color:#2d8a56;font-weight:600;flex-shrink:0">默认</span>' : '';
+
+    // Provider cards HTML
+    var providerCardsHtml = providers.map(function(pv, pi) {
+      var pvKey = pv.provider;
+      var pvRole = pv.role || (pi === 0 ? 'primary' : 'backup');
+      var pvDisplayName = getProviderDisplayName(pvKey);
+      var pvTypeLabel = getProviderTypeLabel(pvKey);
+
+      // Health status for this provider
+      var pvHealth = healthDetails[pvKey] || {};
+      var pvStatus = pvHealth.status || level._status || '';
+      var pvError = pvHealth.error || '';
+      var healthDotClass = pvStatus === 'ok' ? 'ok' : pvStatus === 'fail' ? 'fail' : 'unknown';
+      var healthLabel = pvStatus === 'ok' ? '健康' : pvStatus === 'fail' ? (pvError || '不可用') : '未知';
+      var healthTitle = pvStatus === 'ok' ? '可用' : (pvError || '状态未知');
+
+      var roleChipHtml = pvRole === 'primary'
+        ? '<span class="role-chip primary">主 primary</span>'
+        : '<span class="role-chip backup">备 backup</span>';
+
+      return '<div class="provider-card" draggable="true"' +
+        ' data-level-index="' + i + '"' +
+        ' data-provider-index="' + pi + '"' +
+        ' ondragstart="handleProviderDragStart(event)"' +
+        ' ondragend="handleProviderDragEnd(event)"' +
+        ' ondragover="handleProviderDragOver(event)"' +
+        ' ondragleave="handleProviderDragLeave(event)"' +
+        ' ondrop="handleProviderDrop(event)">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start">' +
+          '<div class="provider-name">' + escHtml(pvDisplayName) +
+            '<span style="font-size:10px;color:var(--text-tertiary);font-weight:400;margin-left:4px">' + escHtml(pvTypeLabel) + '</span>' +
+          '</div>' +
+          '<div style="display:flex;gap:2px;flex-shrink:0">' +
+            '<button class="btn-icon" onclick="editProviderInPool(' + i + ',' + pi + ',event)" title="编辑供应商" style="color:var(--text-tertiary);width:22px;height:22px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>' +
+            (providers.length > 1 ? '<button class="btn-icon" onclick="removeProviderFromPool(' + i + ',' + pi + ',event)" title="移除供应商" style="color:var(--text-tertiary);width:22px;height:22px"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>' : '') +
+          '</div>' +
+        '</div>' +
+        '<div class="provider-health">' +
+          '<span class="health-dot ' + healthDotClass + '" title="' + escHtml(healthTitle) + '"></span>' +
+          '<span title="' + escHtml(healthTitle) + '">' + escHtml(healthLabel) + '</span>' +
+        '</div>' +
+        roleChipHtml +
+      '</div>';
+    }).join('');
+
+    // Level pool status dot (aggregate)
     var statusTitle = level._health_error || '';
     var statusDot = level._status === 'ok' ? '<span title="可用" style="color:#2d8a56;font-size:12px">●</span>'
       : level._status === 'fail' ? '<span title="' + escHtml(statusTitle || '不可用') + '" style="color:#e74c3c;font-size:12px">●</span>'
       : level._status === 'warn' ? '<span title="' + escHtml(statusTitle) + '" style="color:#d97706;font-size:12px">●</span>'
       : '';
 
-    return '<div class="model-item" draggable="true" data-index="' + i + '"' +
-      ' ondragstart="handleDragStart(event)"' +
-      ' ondragend="handleDragEnd(event)"' +
-      ' ondragover="handleDragOver(event)"' +
-      ' ondragleave="handleDragLeave(event)"' +
-      ' ondrop="handleDrop(event)">' +
-      '<div class="model-grip">\u2807</div>' +
-      '<div class="model-rank" style="background:' + color + '20;color:' + color + '">' + (i + 1) + '</div>' +
-      '<div class="model-body">' +
-        '<div>' +
+    return '<div class="level-pool" draggable="true"' +
+      ' data-level-index="' + i + '"' +
+      ' ondragstart="handleLevelDragStart(event)"' +
+      ' ondragend="handleLevelDragEnd(event)"' +
+      ' ondragover="handleLevelDragOver(event)"' +
+      ' ondragleave="handleLevelDragLeave(event)"' +
+      ' ondrop="handleLevelDrop(event)">' +
+      '<div class="level-pool-header">' +
+        '<div class="level-pool-header-left">' +
+          '<div class="model-grip" style="cursor:grab">\u2807</div>' +
+          '<div class="model-rank" style="background:' + color + '20;color:' + color + '">' + (i + 1) + '</div>' +
           '<div class="model-name">' + escHtml((level.name || '?').toUpperCase()) + '</div>' +
-          '<div class="model-meta">' + escHtml(level.model) + '</div>' +
-          (level.context ? '<div style="font-size:11px;color:var(--text-tertiary);margin-top:2px">' + escHtml(level.context) + '</div>' : '') +
+          '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + color + ';flex-shrink:0"></span>' +
+          defaultBadge +
+          statusDot +
+          (level.context ? '<span style="font-size:11px;color:var(--text-tertiary)">' + escHtml(level.context) + '</span>' : '') +
         '</div>' +
-        '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + color + ';flex-shrink:0"></span>' +
-        '<span class="provider-tag">' + provLabel + '</span>' +
-        defaultBadge +
-        statusDot +
+        '<div class="model-actions">' +
+          '<span class="model-meta">' + escHtml(level.model) + '</span>' +
+          '<button class="btn-icon" onclick="openEdit(' + i + ', event)" title="编辑" style="color:var(--text-tertiary)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>' +
+          '<button class="btn-icon" onclick="moveToPool(' + i + ', event)" title="降级到模型池" style="color:var(--text-tertiary)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12l7 7 7-7"/></svg></button>' +
+        '</div>' +
       '</div>' +
-      '<div class="model-actions">' +
-        '<button class="btn-icon" onclick="openEdit(' + i + ', event)" title="编辑" style="color:var(--text-tertiary)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>' +
-        '<button class="btn-icon" onclick="moveToPool(' + i + ', event)" title="降级到模型池" style="color:var(--text-tertiary)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12l7 7 7-7"/></svg></button>' +
+      '<div class="level-pool-providers"' +
+        ' data-level-index="' + i + '"' +
+        ' ondragover="handleProviderZoneDragOver(event)"' +
+        ' ondragleave="handleProviderZoneDragLeave(event)"' +
+        ' ondrop="handleProviderZoneDrop(event)">' +
+        providerCardsHtml +
+      '</div>' +
+      '<div class="level-pool-footer">' +
+        '<button class="btn btn-ghost btn-small" onclick="addProviderToLevel(' + i + ', event)" style="font-size:11px">+ 添加供应商</button>' +
       '</div>' +
     '</div>';
   }).join('');
@@ -1659,26 +1917,33 @@ function pickColor(color) {
 // Drag and Drop
 // ═══════════════════════════════════════════
 
+var dragMode = null; // 'level', 'provider', 'pool'
+var dragData = null;
+
+// ── Pool item drag (unchanged) ──
+
 function handleDragStart(e) {
   dragSourceEl = e.currentTarget;
   dragSourceEl.classList.add('dragging');
   e.dataTransfer.effectAllowed = 'move';
-  // Mark source zone
-  dragSourceEl._fromPool = dragSourceEl.hasAttribute('data-pool-index');
-  dragSourceEl._fromIdx = dragSourceEl._fromPool
-    ? Number(dragSourceEl.getAttribute('data-pool-index'))
-    : Number(dragSourceEl.getAttribute('data-index'));
+  dragSourceEl._fromPool = true;
+  dragSourceEl._fromIdx = Number(dragSourceEl.getAttribute('data-pool-index'));
+  dragMode = 'pool';
+  dragData = { poolIdx: dragSourceEl._fromIdx };
 }
 
 function handleDragEnd(e) {
   e.currentTarget.classList.remove('dragging');
-  document.querySelectorAll('.model-item, .pool-item').forEach(function(el) {
+  document.querySelectorAll('.pool-item, .level-pool, .provider-card').forEach(function(el) {
     el.classList.remove('drag-over');
+    el.classList.remove('drag-over-pool');
   });
-  document.querySelectorAll('.model-list, .pool-list').forEach(function(el) {
+  document.querySelectorAll('.pool-list, .level-pool-providers').forEach(function(el) {
     el.classList.remove('drop-target');
   });
   dragSourceEl = null;
+  dragMode = null;
+  dragData = null;
 }
 
 function handleDragOver(e) {
@@ -1693,7 +1958,197 @@ function handleDragLeave(e) {
   e.currentTarget.classList.remove('drag-over');
 }
 
-// Zone-level drop handlers (for cross-zone dragging)
+// ── Level drag (reorder levels) ──
+
+function handleLevelDragStart(e) {
+  // If the drag originated from a provider card inside the level pool, ignore
+  if (e.target.closest && e.target.closest('.provider-card')) {
+    e.preventDefault();
+    return;
+  }
+  dragMode = 'level';
+  var el = e.currentTarget;
+  dragData = { levelIndex: Number(el.getAttribute('data-level-index')) };
+  el.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+}
+
+function handleLevelDragEnd(e) {
+  e.currentTarget.classList.remove('dragging');
+  document.querySelectorAll('.level-pool').forEach(function(el) {
+    el.classList.remove('drag-over-pool');
+  });
+  dragMode = null;
+  dragData = null;
+}
+
+function handleLevelDragOver(e) {
+  if (dragMode !== 'level') return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  var target = e.currentTarget;
+  if (target !== e.currentTarget.closest('.level-pool') || target === dragSourceEl) return;
+  if (target !== e.currentTarget) return;
+  target.classList.add('drag-over-pool');
+}
+
+function handleLevelDragLeave(e) {
+  e.currentTarget.classList.remove('drag-over-pool');
+}
+
+function handleLevelDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drag-over-pool');
+  if (dragMode !== 'level' || !dragData) return;
+
+  var fromLevelIdx = dragData.levelIndex;
+  var toLevelIdx = Number(e.currentTarget.getAttribute('data-level-index'));
+
+  if (fromLevelIdx === toLevelIdx) return;
+
+  var sorted = getSortedLevels().map(function(entry) { return entry[1]; });
+  var moved = sorted.splice(fromLevelIdx, 1)[0];
+  sorted.splice(toLevelIdx, 0, moved);
+  rebuildLevels(sorted);
+  render();
+}
+
+// ── Provider card drag (reorder within/between pools) ──
+
+function handleProviderDragStart(e) {
+  e.stopPropagation(); // Don't trigger level drag
+  dragMode = 'provider';
+  var el = e.currentTarget;
+  var levelIdx = Number(el.getAttribute('data-level-index'));
+  var provIdx = Number(el.getAttribute('data-provider-index'));
+  dragData = { levelIndex: levelIdx, providerIndex: provIdx };
+  el.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+}
+
+function handleProviderDragEnd(e) {
+  e.stopPropagation();
+  e.currentTarget.classList.remove('dragging');
+  document.querySelectorAll('.provider-card').forEach(function(el) {
+    el.classList.remove('drag-over');
+  });
+  document.querySelectorAll('.level-pool-providers').forEach(function(el) {
+    el.classList.remove('drop-target');
+  });
+  dragMode = null;
+  dragData = null;
+}
+
+function handleProviderDragOver(e) {
+  if (dragMode !== 'provider') return;
+  e.preventDefault();
+  e.stopPropagation();
+  e.dataTransfer.dropEffect = 'move';
+  if (e.currentTarget !== dragSourceEl) {
+    e.currentTarget.classList.add('drag-over');
+  }
+}
+
+function handleProviderDragLeave(e) {
+  e.currentTarget.classList.remove('drag-over');
+}
+
+function handleProviderDrop(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  var target = e.currentTarget;
+  target.classList.remove('drag-over');
+  if (dragMode !== 'provider' || !dragData) return;
+  if (target === e.currentTarget.closest('.provider-card[draggable]')) return;
+
+  var fromLevelIdx = dragData.levelIndex;
+  var fromProvIdx = dragData.providerIndex;
+  var toLevelIdx = Number(target.getAttribute('data-level-index'));
+  var toProvIdx = Number(target.getAttribute('data-provider-index'));
+
+  // Same position
+  if (fromLevelIdx === toLevelIdx && fromProvIdx === toProvIdx) return;
+
+  var sorted = getSortedLevels();
+  var fromLevel = sorted[fromLevelIdx][1];
+  var toLevel = sorted[toLevelIdx][1];
+
+  var fromProviders = getLevelProviders(fromLevel);
+  var toProviders = getLevelProviders(toLevel);
+
+  var movedProv = fromProviders.splice(fromProvIdx, 1)[0];
+
+  // If same level, adjust target index if needed
+  if (fromLevelIdx === toLevelIdx && fromProvIdx < toProvIdx) {
+    toProvIdx--;
+  }
+
+  toProviders.splice(toProvIdx, 0, movedProv);
+
+  // Write back providers
+  fromLevel.providers = fromProviders;
+  if (fromLevel.provider) delete fromLevel.provider;
+  toLevel.providers = toProviders;
+  if (toLevel.provider) delete toLevel.provider;
+
+  render();
+}
+
+// Zone-level drop handlers for provider zones (within a pool)
+function handleProviderZoneDragOver(e) {
+  if (dragMode !== 'provider' && dragMode !== 'pool') return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.classList.add('drop-target');
+}
+
+function handleProviderZoneDragLeave(e) {
+  e.currentTarget.classList.remove('drop-target');
+}
+
+function handleProviderZoneDrop(e) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drop-target');
+
+  var toLevelIdx = Number(e.currentTarget.getAttribute('data-level-index'));
+
+  // Handle pool item dropped onto a level-pool-providers zone
+  if (dragMode === 'pool' && dragSourceEl) {
+    var fromIdx = dragSourceEl._fromIdx;
+    // Use moveToSorted to add the pool item as a new level entry
+    moveToSorted(fromIdx);
+    return;
+  }
+
+  if (dragMode !== 'provider' || !dragData) return;
+
+  var fromLevelIdx = dragData.levelIndex;
+  var fromProvIdx = dragData.providerIndex;
+
+  // Same level, same zone — already handled by card-to-card drop
+  if (fromLevelIdx === toLevelIdx) return;
+
+  var sorted = getSortedLevels();
+  var fromLevel = sorted[fromLevelIdx][1];
+  var toLevel = sorted[toLevelIdx][1];
+
+  var fromProviders = getLevelProviders(fromLevel);
+  var toProviders = getLevelProviders(toLevel);
+
+  var movedProv = fromProviders.splice(fromProvIdx, 1)[0];
+
+  // Add to end of target pool
+  toProviders.push(movedProv);
+
+  fromLevel.providers = fromProviders;
+  if (fromLevel.provider) delete fromLevel.provider;
+  toLevel.providers = toProviders;
+  if (toLevel.provider) delete toLevel.provider;
+
+  render();
+}
+
+// Zone-level drop handlers (for cross-zone dragging: pool <-> levels)
 function handleZoneDragOver(e, zone) {
   e.preventDefault();
   e.dataTransfer.dropEffect = 'move';
@@ -1705,20 +2160,17 @@ function handleZoneDragLeave(e, zone) {
 function handleZoneDrop(e, zone) {
   e.preventDefault();
   e.currentTarget.classList.remove('drop-target');
-  if (!dragSourceEl) return;
+  if (!dragSourceEl || dragMode !== 'pool') return;
 
-  // Only handle cross-zone drops (not item-to-item within sorted)
-  var fromPool = dragSourceEl._fromPool;
+  var fromPool = true;
   var fromIdx = dragSourceEl._fromIdx;
 
-  if (zone === 'sorted' && fromPool) {
-    // Pool → Sorted: add to end of sorted
+  if (zone === 'sorted') {
+    // Pool → Levels: add to end of levels
     moveToSorted(fromIdx);
-  } else if (zone === 'pool' && !fromPool) {
-    // Sorted → Pool: move out
-    moveToPool(fromIdx);
+  } else if (zone === 'pool') {
+    // Already in pool, do nothing
   }
-  // Same-zone drops on the container are ignored (handled by item-level handleDrop)
 }
 
 function handleDrop(e) {
@@ -1728,42 +2180,251 @@ function handleDrop(e) {
 
   if (!dragSourceEl || target === dragSourceEl) return;
 
-  // Cross-zone: pool item dropped ON a sorted item → insert at that position
-  if (dragSourceEl._fromPool && target.hasAttribute('data-index')) {
-    var poolIdx = dragSourceEl._fromIdx;
-    var insertAt = Number(target.getAttribute('data-index'));
-    var pool = config._pool || [];
-    var item = pool[poolIdx];
-    if (!item) return;
-    pool.splice(poolIdx, 1);
-    var sorted = getSortedLevels().map(function(e) { return e[1]; });
-    sorted.splice(insertAt, 0, item);
-    rebuildLevels(sorted);
-    render();
-    toast('已加入等级');
+  // Pool item dropped ON another pool item
+  if (dragMode === 'pool' && target.hasAttribute('data-pool-index')) {
+    // Pool reorder — not critical, ignore
+    return;
+  }
+}
+
+// ── Add provider to a level pool ──
+
+// State for provider edit modal
+var _pvEditState = { levelIdx: -1, providerIdx: -1, mode: 'edit' };
+
+var PV_PRESETS = {
+  'glm':         { label: 'GLM (智谱)',  url: 'https://open.bigmodel.cn/api/anthropic/v1/messages' },
+  'glm-qianfan': { label: '千帆 GLM',     url: 'https://qianfan.baidubce.com/anthropic/v1/messages' },
+  'deepseek':    { label: 'DeepSeek',     url: 'https://api.deepseek.com/anthropic/v1/messages' },
+  'moonshot':    { label: 'Moonshot',     url: 'https://api.moonshot.cn/anthropic/v1/messages' },
+  'qwen':        { label: 'Qwen (通义)',  url: 'https://dashscope.aliyuncs.com/anthropic/v1/messages' }
+};
+
+function addProviderToLevel(levelIdx, e) {
+  if (e) e.stopPropagation();
+  var sorted = getSortedLevels();
+  if (!sorted[levelIdx]) return;
+
+  _pvEditState = { levelIdx: levelIdx, providerIdx: -1, mode: 'add' };
+
+  // Show add-mode UI
+  document.getElementById('pv-edit-title').textContent = '添加供应商';
+  document.getElementById('pv-edit-submit-btn').textContent = '添加';
+  document.getElementById('pv-edit-key-field').style.display = '';
+  document.getElementById('pv-edit-key').readOnly = false;
+  document.getElementById('pv-edit-key').style.background = '';
+  document.getElementById('pv-edit-key').style.color = '';
+  document.getElementById('pv-edit-key').style.cursor = '';
+  document.getElementById('pv-edit-key-hint').textContent = '（仅限英文、数字、连字符）';
+  document.getElementById('pv-edit-role-field').style.display = 'none';
+  document.getElementById('pv-edit-preset-field').style.display = '';
+
+  // Build preset chips
+  var chipsHtml = '';
+  var existingKeys = Object.keys(config.providers || {});
+  for (var k in PV_PRESETS) {
+    var p = PV_PRESETS[k];
+    var alreadyAdded = existingKeys.indexOf(k) >= 0 ? ' style="opacity:0.5" title="已存在"' : '';
+    chipsHtml += '<div class="chip"' + alreadyAdded + ' onclick="applyPvPreset(\'' + k + '\', this)">' + p.label + '</div>';
+  }
+  document.getElementById('pv-edit-preset-chips').innerHTML = chipsHtml;
+
+  // Clear fields
+  document.getElementById('pv-edit-key').value = '';
+  document.getElementById('pv-edit-url').value = '';
+  document.getElementById('pv-edit-apikey').value = '';
+  document.getElementById('pv-edit-proxy').value = '';
+
+  // Reset password visibility
+  document.getElementById('pv-edit-apikey').type = 'password';
+  var overlay = document.getElementById('provider-edit-overlay');
+  overlay.querySelector('.pv-eye-open').style.display = '';
+  overlay.querySelector('.pv-eye-closed').style.display = 'none';
+
+  document.getElementById('provider-edit-overlay').classList.add('show');
+  document.getElementById('pv-edit-key').focus();
+}
+
+function applyPvPreset(key, el) {
+  var preset = PV_PRESETS[key];
+  if (!preset) return;
+  document.getElementById('pv-edit-key').value = key;
+  document.getElementById('pv-edit-url').value = preset.url;
+  // Highlight active chip
+  var chips = document.querySelectorAll('#pv-edit-preset-chips .chip');
+  for (var i = 0; i < chips.length; i++) chips[i].classList.remove('active');
+  el.classList.add('active');
+}
+
+// State for provider edit modal
+var _pvEditState = { levelIdx: -1, providerIdx: -1 };
+
+function editProviderInPool(levelIdx, providerIdx, e) {
+  if (e) e.stopPropagation();
+  var sorted = getSortedLevels();
+  if (!sorted[levelIdx]) return;
+  var level = sorted[levelIdx][1];
+  var providers = getLevelProviders(level);
+  if (!providers[providerIdx]) return;
+  var pv = providers[providerIdx];
+  var pvKey = pv.provider;
+
+  _pvEditState = { levelIdx: levelIdx, providerIdx: providerIdx };
+
+  // Fill modal fields
+  // Edit-mode UI
+  document.getElementById('pv-edit-title').textContent = '编辑供应商 — ' + getProviderDisplayName(pvKey);
+  document.getElementById('pv-edit-submit-btn').textContent = '保存';
+  document.getElementById('pv-edit-key-field').style.display = 'none';
+  document.getElementById('pv-edit-role-field').style.display = '';
+  document.getElementById('pv-edit-preset-field').style.display = 'none';
+  document.getElementById('pv-edit-role').value = pv.role || (providerIdx === 0 ? 'primary' : 'backup');
+
+  // Fetch full config with keys
+  fetch('/config?show_keys=1').then(function(r) { return r.json(); }).then(function(full) {
+    var provCfg = (full.providers || {})[pvKey] || {};
+    document.getElementById('pv-edit-url').value = provCfg.url || '';
+    document.getElementById('pv-edit-apikey').value = provCfg.key || '';
+    document.getElementById('pv-edit-proxy').value = provCfg.proxy || '';
+  }).catch(function() {
+    var provCfg = (config.providers || {})[pvKey] || {};
+    document.getElementById('pv-edit-url').value = provCfg.url || '';
+    document.getElementById('pv-edit-apikey').value = provCfg.key || '';
+    document.getElementById('pv-edit-proxy').value = provCfg.proxy || '';
+  });
+
+  // Reset password visibility
+  document.getElementById('pv-edit-apikey').type = 'password';
+  var overlay = document.getElementById('provider-edit-overlay');
+  overlay.querySelector('.pv-eye-open').style.display = '';
+  overlay.querySelector('.pv-eye-closed').style.display = 'none';
+
+  document.getElementById('provider-edit-overlay').classList.add('show');
+}
+
+function closeProviderEditModal() {
+  document.getElementById('provider-edit-overlay').classList.remove('show');
+  _pvEditState = { levelIdx: -1, providerIdx: -1 };
+}
+
+function togglePvKeyVisibility() {
+  var input = document.getElementById('pv-edit-apikey');
+  var overlay = document.getElementById('provider-edit-overlay');
+  var eyeOpen = overlay.querySelector('.pv-eye-open');
+  var eyeClosed = overlay.querySelector('.pv-eye-closed');
+  if (input.type === 'password') {
+    input.type = 'text';
+    eyeOpen.style.display = 'none';
+    eyeClosed.style.display = '';
+  } else {
+    input.type = 'password';
+    eyeOpen.style.display = '';
+    eyeClosed.style.display = 'none';
+  }
+}
+
+function submitProviderEdit() {
+  var levelIdx = _pvEditState.levelIdx;
+  if (levelIdx < 0) return;
+
+  var sorted = getSortedLevels();
+  if (!sorted[levelIdx]) return;
+  var level = sorted[levelIdx][1];
+  var providers = getLevelProviders(level);
+
+  var newUrl = document.getElementById('pv-edit-url').value.trim();
+  var newKey = document.getElementById('pv-edit-apikey').value.trim();
+  var newProxy = document.getElementById('pv-edit-proxy').value.trim();
+
+  // Validate URL
+  if (!newUrl) {
+    showToast('Base URL 不能为空', 'error');
     return;
   }
 
-  // Cross-zone: sorted item dropped ON a pool item → move to pool
-  if (!dragSourceEl._fromPool && target.hasAttribute('data-pool-index')) {
-    moveToPool(dragSourceEl._fromIdx);
-    return;
+  if (_pvEditState.mode === 'add') {
+    // --- Add mode ---
+    var providerKey = document.getElementById('pv-edit-key').value.trim().toLowerCase();
+    if (!providerKey || !/^[a-z0-9][a-z0-9-]*$/.test(providerKey)) {
+      showToast('供应商标识格式不正确（仅限英文、数字、连字符）', 'error');
+      return;
+    }
+    var exists = providers.some(function(p) { return p.provider === providerKey; });
+    if (exists) {
+      showToast('该供应商已存在于当前层级', 'error');
+      return;
+    }
+
+    // Create provider entry
+    if (!config.providers) config.providers = {};
+    var provConfig = { url: newUrl };
+    if (newKey) provConfig.key = newKey;
+    if (newProxy) provConfig.proxy = newProxy;
+    config.providers[providerKey] = provConfig;
+
+    var role = providers.length === 0 ? 'primary' : 'backup';
+    providers.push({ provider: providerKey, role: role });
+    level.providers = providers;
+    if (level.provider) delete level.provider;
+  } else {
+    // --- Edit mode ---
+    var providerIdx = _pvEditState.providerIdx;
+    if (!providers[providerIdx]) return;
+    var pv = providers[providerIdx];
+    var pvKey = pv.provider;
+
+    // Update provider config
+    if (!config.providers) config.providers = {};
+    var updated = config.providers[pvKey] || {};
+    updated.url = newUrl;
+    if (newKey) updated.key = newKey;
+    if (newProxy) updated.proxy = newProxy;
+    else delete updated.proxy;
+    config.providers[pvKey] = updated;
+
+    // Update role
+    var newRole = document.getElementById('pv-edit-role').value;
+    providers[providerIdx].role = newRole;
+    // Ensure only one primary per pool
+    if (newRole === 'primary') {
+      for (var j = 0; j < providers.length; j++) {
+        if (j !== providerIdx) providers[j].role = 'backup';
+      }
+    }
+    level.providers = providers;
   }
 
-  // Same-zone sorted reorder
-  var list = document.getElementById('sorted-list');
-  var items = Array.from(list.querySelectorAll('.model-item'));
-  var fromIdx = items.indexOf(dragSourceEl);
-  var toIdx = items.indexOf(target);
-
-  if (fromIdx < 0 || toIdx < 0) return;
-
-  // Reorder in config
-  var sorted = getSortedLevels().map(function(e) { return e[1]; });
-  var moved = sorted.splice(fromIdx, 1)[0];
-  sorted.splice(toIdx, 0, moved);
-  rebuildLevels(sorted);
+  closeProviderEditModal();
   render();
+  showToast('供应商已更新');
+}
+
+function removeProviderFromPool(levelIdx, providerIdx, e) {
+  if (e) e.stopPropagation();
+  var sorted = getSortedLevels();
+  if (!sorted[levelIdx]) return;
+  var level = sorted[levelIdx][1];
+  var providers = getLevelProviders(level);
+  if (providers.length <= 1) {
+    showToast('至少保留一个供应商', 'error');
+    return;
+  }
+  var removed = providers.splice(providerIdx, 1)[0];
+  // Ensure first provider is primary
+  if (providers.length > 0) providers[0].role = 'primary';
+  level.providers = providers;
+
+  // Move removed provider to pool
+  if (!config._pool) config._pool = [];
+  config._pool.push({
+    name: removed.provider,
+    provider: removed.provider,
+    model: level.model,
+    color: level.color
+  });
+
+  render();
+  showToast('已移除供应商');
 }
 
 // ═══════════════════════════════════════════
@@ -1800,8 +2461,12 @@ function openEdit(idx, e) {
   editIdx = idx;
   var item = sorted[idx][1];
 
-  // Set type
-  var isCustom = item.provider !== 'anthropic';
+  // Set type — check primary provider from providers array or legacy provider field
+  var primaryProvider = item.provider;
+  if (!primaryProvider && item.providers && item.providers.length > 0) {
+    primaryProvider = item.providers[0].provider;
+  }
+  var isCustom = primaryProvider !== 'anthropic';
   currentAddType = isCustom ? 'custom' : 'claude';
 
   // Update type selector visual
@@ -1848,14 +2513,14 @@ function openEdit(idx, e) {
     document.getElementById('add-custom-name').value = item.name || '';
     document.getElementById('add-custom-alias').value = item.alias || '';
     document.getElementById('add-custom-model').value = item.model || '';
-    if (config.providers && config.providers[item.provider]) {
-      var prov = config.providers[item.provider];
+    if (config.providers && config.providers[primaryProvider]) {
+      var prov = config.providers[primaryProvider];
       document.getElementById('add-custom-url').value = prov.url || '';
       document.getElementById('add-custom-proxy').value = prov.proxy || '';
       // Fetch full key for editing
       fetch('/config?show_keys=1').then(function(r){return r.json()}).then(function(full){
-        if(full.providers && full.providers[item.provider]){
-          document.getElementById('add-custom-key').value = full.providers[item.provider].key || '';
+        if(full.providers && full.providers[primaryProvider]){
+          document.getElementById('add-custom-key').value = full.providers[primaryProvider].key || '';
         }
       }).catch(function(){
         document.getElementById('add-custom-key').value = prov.key || '';
@@ -2021,9 +2686,17 @@ function submitEdit() {
     item.model = getClaudeModel();
     var alias = document.getElementById('add-claude-alias').value.trim();
     item.alias = alias || undefined;
-    // If switching from custom to claude
-    if (item.provider !== 'anthropic') {
+    // Update primary provider to anthropic
+    var currentPrimary = item.provider || (item.providers && item.providers[0] ? item.providers[0].provider : '');
+    if (currentPrimary !== 'anthropic') {
       item.provider = 'anthropic';
+      // Also update the providers array
+      var providers = getLevelProviders(item);
+      if (providers.length > 0) {
+        providers[0].provider = 'anthropic';
+        item.providers = providers;
+      }
+      delete item.provider;
     }
   } else {
     var name = document.getElementById('add-custom-name').value.trim();
@@ -2044,7 +2717,16 @@ function submitEdit() {
     if (apiKey) providerConfig.key = apiKey;
     if (proxy) providerConfig.proxy = proxy;
     config.providers[providerName] = providerConfig;
-    item.provider = providerName;
+
+    // Update providers array
+    var providers = getLevelProviders(item);
+    if (providers.length > 0) {
+      providers[0].provider = providerName;
+      item.providers = providers;
+      delete item.provider;
+    } else {
+      item.provider = providerName;
+    }
   }
 
   item.color = selectedColor;
@@ -2265,6 +2947,23 @@ async function saveConfig() {
     showToast('默认模型等级 ' + defaultLevel + ' 不存在，请重新设置默认', 'error');
     return;
   }
+
+  // Before saving, ensure providers arrays are normalized in config.levels
+  // Read the current DOM state and sync provider order back to config
+  sorted.forEach(function(entry, i) {
+    var level = entry[1];
+    var providers = getLevelProviders(level);
+    // Ensure roles are correct: first is primary, rest are backup
+    providers.forEach(function(pv, pi) {
+      pv.role = pi === 0 ? 'primary' : 'backup';
+    });
+    level.providers = providers;
+    // Remove legacy single-provider field if providers array exists
+    if (level.provider && level.providers.length > 0) {
+      delete level.provider;
+    }
+  });
+
   try {
     var resp = await fetch(API_BASE + '/config', {
       method: 'POST',
